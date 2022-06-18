@@ -1,65 +1,34 @@
-use std::fs::File;
-use std::io::BufReader;
+pub mod config;
+pub mod http_data;
+
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Local};
-use cookie_store::CookieStore;
-use reqwest::Client;
+use cookie_store::{Cookie, CookieStore};
+use http_data::*;
+use log::debug;
+use reqwest::{cookie, Client};
 use reqwest_cookie_store::CookieStoreMutex;
 use rpassword::prompt_password;
-use serde_derive::Deserialize;
-use serde_derive::Serialize;
+use serde_json::to_string;
 
-use crate::tracker::config::{Handler, Side};
+use crate::{
+    handler::hackaru::config::update_config,
+    tracker::config::{Handler, Side},
+};
+
+use self::config::{create_config, HackaruConfig};
 
 pub struct Hackaru {
     client: reqwest::Client,
-    url: String,
-}
-
-#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
-struct LoginRequest {
-    user: UserRequest,
-}
-
-#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
-struct UserRequest {
-    email: String,
-    password: String,
-}
-
-#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
-struct ActivityStart {
-    activity: ActivityStartData,
-}
-
-#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
-struct ActivityStartData {
-    description: String,
-    project_id: u64,
-    started_at: String,
-}
-
-#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
-struct ActivityEnd {
-    activity: ActivityEndData,
-}
-
-#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
-struct ActivityEndData {
-    id: u64,
-    stopped_at: String,
-}
-#[derive(Deserialize)]
-struct ActivityResponse {
-    id: u64,
+    config: HackaruConfig,
 }
 
 #[async_trait]
 impl Handler for Hackaru {
     async fn handle(self: &Self, side: &Side, duration: &(DateTime<Local>, DateTime<Local>)) {
-        let activity_start = ActivityStart {
+        let activity_start = ActivityStartRequest {
             activity: ActivityStartData {
                 description: side.label.clone(),
                 project_id: 5867,
@@ -69,17 +38,21 @@ impl Handler for Hackaru {
 
         let response = self
             .client
-            .post(format!("{}/v1/activities", self.url))
+            .post(format!(
+                "{}/{}",
+                self.config.hackaru_url.trim_end_matches("/"),
+                self.config.activities_rel_url.trim_start_matches("/")
+            ))
             .header("x-requested-with", "XMLHttpRequest")
             .json(&activity_start)
             .send()
             .await
-            .expect("error")
+            .unwrap()
             .json::<ActivityResponse>()
             .await
             .unwrap();
 
-        let activity_end = ActivityEnd {
+        let activity_end = ActivityEndRequest {
             activity: ActivityEndData {
                 id: response.id,
                 stopped_at: duration.1.to_rfc3339(),
@@ -87,7 +60,15 @@ impl Handler for Hackaru {
         };
 
         self.client
-            .post(format!("{}/v1/activities/{}", self.url, response.id))
+            .put(format!(
+                "{}/{}/{}",
+                self.config.hackaru_url.trim_end_matches("/"),
+                self.config
+                    .activities_rel_url
+                    .trim_start_matches("/")
+                    .trim_end_matches("/"),
+                response.id
+            ))
             .header("x-requested-with", "XMLHttpRequest")
             .json(&activity_end)
             .send()
@@ -97,19 +78,20 @@ impl Handler for Hackaru {
 }
 
 pub async fn create_handler() -> Hackaru {
-    let base_url = "https://api.hackaru.app";
-    let cookie_store = create_cookie_store();
+    let mut config = create_config();
+    let cookie_store = create_cookie_store(&config);
     let client = create_client(&cookie_store);
 
     if !has_cookies(&cookie_store) {
-        auth_client(&client, base_url).await;
+        auth_client(&client, &mut config).await;
 
-        save_cookies(&cookie_store);
+        save_cookies(&cookie_store, &mut config);
+        update_config(&config);
     }
 
     Hackaru {
         client: client,
-        url: String::from(base_url),
+        config: config,
     }
 }
 
@@ -118,14 +100,15 @@ fn has_cookies(cookie_store: &Arc<CookieStoreMutex>) -> bool {
     store.iter_unexpired().count() > 0
 }
 
-fn save_cookies(cookie_store: &Arc<CookieStoreMutex>) {
-    let store = cookie_store.lock().unwrap();
+fn save_cookies(cookie_store: &Arc<CookieStoreMutex>, config: &mut HackaruConfig) {
+    let cookie_store = cookie_store.lock().unwrap();
 
-    let mut writer = std::fs::File::create("cookies.json")
-        .map(std::io::BufWriter::new)
-        .unwrap();
+    let cookies: Vec<&Cookie> = cookie_store.iter_unexpired().map(|c| c).collect();
 
-    store.save_json(&mut writer).unwrap();
+    let json = to_string(&cookies).unwrap();
+
+    config.cookies = json;
+    update_config(&config);
 }
 
 fn create_client(cookie_store: &Arc<CookieStoreMutex>) -> Client {
@@ -136,42 +119,51 @@ fn create_client(cookie_store: &Arc<CookieStoreMutex>) -> Client {
         .unwrap()
 }
 
-async fn auth_client(client: &Client, base_url: &str) {
-    println!("Type your hackaru email");
+async fn auth_client(client: &Client, config: &mut HackaruConfig) {
+    if config.email.is_empty() {
+        let mut email = String::new();
+        println!("Type your hackaru email");
 
-    let mut email = String::new();
+        std::io::stdin()
+            .read_line(&mut email)
+            .expect("Please provide email");
 
-    std::io::stdin()
-        .read_line(&mut email)
-        .expect("Please provide email");
+        config.email = email.clone();
+        update_config(&config);
+    }
 
-    let email = email.as_str().trim();
+    let email = config.email.clone();
 
-    let password = prompt_password("Type your hackaru password: ").unwrap();
-    let password = password.as_str().trim();
+    let password: String = prompt_password("Type your hackaru password: ")
+        .unwrap()
+        .trim()
+        .to_string();
 
     let login = LoginRequest {
         user: UserRequest {
-            email: String::from(email),
-            password: String::from(password),
+            email: email,
+            password: password,
         },
     };
 
-    client
-        .post(format!("{}/auth/auth_tokens", base_url))
+    let res = client
+        .post(format!(
+            "{}/auth/auth_tokens",
+            config.hackaru_url.trim_end_matches("/")
+        ))
         .json(&login)
         .header("Content-Type", "application/json")
         .header("X-Requested-With", "XMLHttpRequest")
         .send()
         .await
         .unwrap();
+
+    debug!("{:?}", res.text().await);
 }
 
-fn create_cookie_store() -> Arc<CookieStoreMutex> {
-    let cookie_store = {
-        let file = File::open("cookies.json").map(BufReader::new).unwrap();
-        CookieStore::load_json(file).unwrap()
-    };
-    let cookie_store = CookieStoreMutex::new(cookie_store);
-    std::sync::Arc::new(cookie_store)
+fn create_cookie_store(config: &HackaruConfig) -> Arc<CookieStoreMutex> {
+    let cookies = config.get_cookies();
+    std::sync::Arc::new(CookieStoreMutex::new(
+        CookieStore::from_cookies(cookies, false).unwrap(),
+    ))
 }
