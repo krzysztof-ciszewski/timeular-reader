@@ -37,7 +37,7 @@ impl HackaruConfig {
 }
 
 pub fn create_config() -> HackaruConfig {
-    crate::config::create_config::<HackaruConfig>(CONFIG_KEY)
+    crate::config::get_config::<HackaruConfig>(CONFIG_KEY)
 }
 
 pub fn update_config(config: &HackaruConfig) {

@@ -6,6 +6,9 @@ use chrono::Local;
 use futures::StreamExt;
 use log::debug;
 
+use crate::handler::hackaru::create_handler;
+use crate::tracker::config::Handler;
+
 use super::config;
 
 pub async fn read_tracker(id: PeripheralId, adapter: Arc<Adapter>) -> Result<(), Box<dyn Error>> {
@@ -21,11 +24,13 @@ pub async fn read_tracker(id: PeripheralId, adapter: Arc<Adapter>) -> Result<(),
         .unwrap();
 
     tracker.subscribe(&orientation_char).await?;
+    let mut notification_stream = tracker.notifications().await.unwrap();
+    println!("Connected");
+
+    let config = config::get_timeular_config();
+    let handler = create_handler().await;
 
     let mut prev_side: Option<u8> = None;
-    let mut notification_stream = tracker.notifications().await.unwrap();
-    let trackable_sides: [u8; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
-    let config = config::create_timeular_config().await;
     let mut start_date = Local::now();
 
     while let Some(data) = notification_stream.next().await {
@@ -34,8 +39,7 @@ pub async fn read_tracker(id: PeripheralId, adapter: Arc<Adapter>) -> Result<(),
 
         if prev_side.is_some() && !prev_side.unwrap().eq(&side) {
             let end_date = Local::now();
-            config
-                .handler
+            handler
                 .handle(
                     config.get_side(&prev_side.unwrap()),
                     &(start_date, end_date),
@@ -43,7 +47,7 @@ pub async fn read_tracker(id: PeripheralId, adapter: Arc<Adapter>) -> Result<(),
                 .await;
         }
 
-        if !trackable_sides.contains(&side) {
+        if !config.is_trackable(&side) {
             prev_side = None;
             continue;
         }
@@ -53,4 +57,8 @@ pub async fn read_tracker(id: PeripheralId, adapter: Arc<Adapter>) -> Result<(),
     }
 
     Ok(())
+}
+
+pub async fn setup_labels(id: PeripheralId, adapter: Arc<Adapter>) {
+    
 }

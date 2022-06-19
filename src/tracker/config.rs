@@ -1,17 +1,19 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Local};
 use log::debug;
+use serde::{Deserialize, Serialize};
 
-use crate::handler::hackaru::create_handler;
+use crate::config::Config;
 
 pub const ORIENTATION_CHARACTERISTIC_UUID: &str = "c7e70012-c847-11e6-8175-8c89a55d403c";
+const CONFIG_KEY: &str = "timeular";
 
+#[derive(Debug, Serialize, Deserialize)]
 pub struct TimeularConfig {
     pub sides: [Side; 8],
-    pub handler: Box<dyn Handler + Send + Sync>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Side {
     pub side_num: u8,
     pub label: String,
@@ -34,48 +36,63 @@ impl Handler for CallbackHandler {
     }
 }
 
-impl TimeularConfig {
-    pub(crate) fn get_side(&self, side_num: &u8) -> &Side {
-        self.sides.iter().find(|e| e.side_num.eq(side_num)).unwrap()
+impl Default for TimeularConfig {
+    fn default() -> Self {
+        TimeularConfig {
+            sides: [
+                Side {
+                    side_num: 1,
+                    label: String::new(),
+                },
+                Side {
+                    side_num: 2,
+                    label: String::new(),
+                },
+                Side {
+                    side_num: 3,
+                    label: String::new(),
+                },
+                Side {
+                    side_num: 4,
+                    label: String::new(),
+                },
+                Side {
+                    side_num: 5,
+                    label: String::new(),
+                },
+                Side {
+                    side_num: 6,
+                    label: String::new(),
+                },
+                Side {
+                    side_num: 7,
+                    label: String::new(),
+                },
+                Side {
+                    side_num: 8,
+                    label: String::new(),
+                },
+            ],
+        }
     }
 }
 
-pub async fn create_timeular_config() -> TimeularConfig {
-    TimeularConfig {
-        sides: [
-            Side {
-                side_num: 1,
-                label: "1".to_string(),
-            },
-            Side {
-                side_num: 2,
-                label: "2".to_string(),
-            },
-            Side {
-                side_num: 3,
-                label: "3".to_string(),
-            },
-            Side {
-                side_num: 4,
-                label: "4".to_string(),
-            },
-            Side {
-                side_num: 5,
-                label: "5".to_string(),
-            },
-            Side {
-                side_num: 6,
-                label: "6".to_string(),
-            },
-            Side {
-                side_num: 7,
-                label: "7".to_string(),
-            },
-            Side {
-                side_num: 8,
-                label: "8".to_string(),
-            },
-        ],
-        handler: Box::new(create_handler().await),
+impl<'de> Config<'de> for TimeularConfig {}
+
+impl TimeularConfig {
+    pub(crate) fn get_side(&self, side_num: &u8) -> &Side {
+        self.find_side(side_num).unwrap()
     }
+
+    pub fn is_trackable(&self, side_num: &u8) -> bool {
+        self.find_side(side_num).is_some()
+    }
+
+    fn find_side(&self, side_num: &u8) -> Option<&Side> {
+        self.sides.iter().find(|e| e.side_num.eq(side_num))
+    }
+}
+
+pub fn get_timeular_config() -> TimeularConfig {
+    crate::config::get_config::<TimeularConfig>(CONFIG_KEY)
 }

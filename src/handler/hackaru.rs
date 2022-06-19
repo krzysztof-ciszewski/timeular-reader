@@ -8,7 +8,7 @@ use chrono::{DateTime, Local};
 use cookie_store::{Cookie, CookieStore};
 use http_data::*;
 use log::debug;
-use reqwest::{cookie, Client};
+use reqwest::Client;
 use reqwest_cookie_store::CookieStoreMutex;
 use rpassword::prompt_password;
 use serde_json::to_string;

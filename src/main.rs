@@ -8,9 +8,9 @@ use std::error::Error;
 use std::sync::Arc;
 
 use btleplug::api::{Central, CentralEvent, Manager as _, Peripheral, ScanFilter};
-use btleplug::platform::{Adapter, Manager};
+use btleplug::platform::{Adapter, Manager, PeripheralId};
 use futures::stream::StreamExt;
-use log::{debug, LevelFilter};
+use log::LevelFilter;
 use simplelog::{ColorChoice, ConfigBuilder, TermLogger, TerminalMode};
 
 use crate::tracker::reader;
@@ -21,7 +21,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let adapter = Arc::new(get_adapter().await);
     let mut events = adapter.events().await?;
 
-    debug!("start scan");
+    println!("Looking for Timeular Tracker");
 
     adapter.start_scan(ScanFilter::default()).await?;
 
@@ -39,21 +39,40 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 if !name.to_lowercase().contains("timeular") {
                     continue;
                 }
-                debug!("found timeular");
-                let adapter = adapter.clone();
-                tokio::spawn(async move {
-                    reader::read_tracker(id, adapter).await;
-                });
+                spawn_reader(id, &adapter);
             }
             CentralEvent::DeviceDisconnected(id) => {
-                debug!("DISCONNECT {:?}", id);
-                debug!("thread {}", std::thread::current().name().unwrap());
+                let per = match adapter.peripheral(&id).await {
+                    Ok(per) => per,
+                    Err(_e) => continue,
+                };
+                let name = match get_name(&per).await {
+                    Ok(name) => name,
+                    Err(_e) => continue,
+                };
+
+                if !name.to_lowercase().contains("timeular") {
+                    continue;
+                }
+
+                println!("Tracker disconnected");
+                break;
             }
             _ => {}
         }
     }
 
     Ok(())
+}
+
+fn spawn_reader(id: PeripheralId, adapter: &Arc<Adapter>) {
+    println!("Connecting to tracker...");
+
+    let adapter = adapter.clone();
+
+    tokio::spawn(async move {
+        reader::read_tracker(id, adapter).await.unwrap();
+    });
 }
 
 async fn get_adapter() -> Adapter {
