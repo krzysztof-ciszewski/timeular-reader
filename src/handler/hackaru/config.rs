@@ -31,8 +31,13 @@ impl<'de> Config<'de> for HackaruConfig {}
 
 impl HackaruConfig {
     pub fn get_cookies(&self) -> Vec<Result<Cookie<'static>, Box<dyn Error>>> {
-        let cookies: Vec<Cookie> = serde_json::from_str(self.cookies.as_str()).unwrap();
-        cookies.into_iter().by_ref().map(|c| Ok(c)).collect()
+        let cookies_str = self.cookies.as_str();
+        if cookies_str.is_empty() {
+            return vec![];
+        }
+
+        let cookies: Vec<Cookie> = serde_json::from_str(cookies_str).unwrap();
+        cookies.into_iter().by_ref().map(Ok).collect()
     }
 }
 

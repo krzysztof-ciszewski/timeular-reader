@@ -1,3 +1,5 @@
+use std::ops::Deref;
+
 use async_trait::async_trait;
 use chrono::{DateTime, Local};
 use log::debug;
@@ -10,7 +12,7 @@ const CONFIG_KEY: &str = "timeular";
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TimeularConfig {
-    pub sides: [Side; 8],
+    pub sides: Vec<Side>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -39,7 +41,7 @@ impl Handler for CallbackHandler {
 impl Default for TimeularConfig {
     fn default() -> Self {
         TimeularConfig {
-            sides: [
+            sides: vec![
                 Side {
                     side_num: 1,
                     label: String::new(),
@@ -81,7 +83,7 @@ impl<'de> Config<'de> for TimeularConfig {}
 
 impl TimeularConfig {
     pub(crate) fn get_side(&self, side_num: &u8) -> &Side {
-        self.find_side(side_num).unwrap()
+        &*self.find_side(side_num).unwrap()
     }
 
     pub fn is_trackable(&self, side_num: &u8) -> bool {
@@ -91,8 +93,24 @@ impl TimeularConfig {
     fn find_side(&self, side_num: &u8) -> Option<&Side> {
         self.sides.iter().find(|e| e.side_num.eq(side_num))
     }
+
+    fn find_side_mut(&mut self, side_num: &u8) -> Option<&mut Side> {
+        self.sides.iter_mut().find(|e| e.side_num.eq(side_num))
+    }
+
+    pub fn set_side(&mut self, side_num: u8, label: String) {
+        if let Some(side) = self.find_side_mut(&side_num) {
+            side.label = label;
+        } else {
+            self.sides.push(Side { side_num, label });
+        }
+    }
 }
 
 pub fn get_timeular_config() -> TimeularConfig {
     crate::config::get_config::<TimeularConfig>(CONFIG_KEY)
+}
+
+pub fn update_timeular_config(config: &TimeularConfig) {
+    crate::config::update_config(CONFIG_KEY, config);
 }

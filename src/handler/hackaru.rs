@@ -21,13 +21,13 @@ use crate::{
 use self::config::{create_config, HackaruConfig};
 
 pub struct Hackaru {
-    client: reqwest::Client,
+    client: Client,
     config: HackaruConfig,
 }
 
 #[async_trait]
 impl Handler for Hackaru {
-    async fn handle(self: &Self, side: &Side, duration: &(DateTime<Local>, DateTime<Local>)) {
+    async fn handle(&self, side: &Side, duration: &(DateTime<Local>, DateTime<Local>)) {
         let activity_start = ActivityStartRequest {
             activity: ActivityStartData {
                 description: side.label.clone(),
@@ -40,8 +40,8 @@ impl Handler for Hackaru {
             .client
             .post(format!(
                 "{}/{}",
-                self.config.hackaru_url.trim_end_matches("/"),
-                self.config.activities_rel_url.trim_start_matches("/")
+                self.config.hackaru_url.trim_end_matches('/'),
+                self.config.activities_rel_url.trim_matches('/')
             ))
             .header("x-requested-with", "XMLHttpRequest")
             .json(&activity_start)
@@ -62,11 +62,8 @@ impl Handler for Hackaru {
         self.client
             .put(format!(
                 "{}/{}/{}",
-                self.config.hackaru_url.trim_end_matches("/"),
-                self.config
-                    .activities_rel_url
-                    .trim_start_matches("/")
-                    .trim_end_matches("/"),
+                self.config.hackaru_url.trim_end_matches('/'),
+                self.config.activities_rel_url.trim_matches('/'),
                 response.id
             ))
             .header("x-requested-with", "XMLHttpRequest")
@@ -90,8 +87,8 @@ pub async fn create_handler() -> Hackaru {
     }
 
     Hackaru {
-        client: client,
-        config: config,
+        client,
+        config,
     }
 }
 
@@ -134,22 +131,21 @@ async fn auth_client(client: &Client, config: &mut HackaruConfig) {
 
     let email = config.email.clone();
 
-    let password: String = prompt_password("Type your hackaru password: ")
+    let password: String = *prompt_password("Type your hackaru password: ")
         .unwrap()
-        .trim()
-        .to_string();
+        .trim();
 
     let login = LoginRequest {
         user: UserRequest {
-            email: email,
-            password: password,
+            email,
+            password,
         },
     };
 
     let res = client
         .post(format!(
             "{}/auth/auth_tokens",
-            config.hackaru_url.trim_end_matches("/")
+            config.hackaru_url.trim_end_matches('/')
         ))
         .json(&login)
         .header("Content-Type", "application/json")
@@ -163,7 +159,7 @@ async fn auth_client(client: &Client, config: &mut HackaruConfig) {
 
 fn create_cookie_store(config: &HackaruConfig) -> Arc<CookieStoreMutex> {
     let cookies = config.get_cookies();
-    std::sync::Arc::new(CookieStoreMutex::new(
+    Arc::new(CookieStoreMutex::new(
         CookieStore::from_cookies(cookies, false).unwrap(),
     ))
 }

@@ -1,7 +1,3 @@
-pub mod config;
-pub mod handler;
-pub mod tracker;
-
 extern crate core;
 
 use std::error::Error;
@@ -9,15 +5,33 @@ use std::sync::Arc;
 
 use btleplug::api::{Central, CentralEvent, Manager as _, Peripheral, ScanFilter};
 use btleplug::platform::{Adapter, Manager, PeripheralId};
+use clap::Parser;
 use futures::stream::StreamExt;
-use log::LevelFilter;
+use log::{debug, LevelFilter};
 use simplelog::{ColorChoice, ConfigBuilder, TermLogger, TerminalMode};
 
 use crate::tracker::reader;
 
+pub mod config;
+pub mod handler;
+pub mod tracker;
+
+#[derive(Parser, Debug)]
+#[clap(about, long_about = None)]
+struct CliArgs {
+    #[clap(short, long, action)]
+    setup: bool,
+    #[clap(short, long, action = clap::ArgAction::Count)]
+    verbose: u8,
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    create_logger();
+    let cli_args = CliArgs::parse();
+
+    create_logger(&cli_args.verbose);
+
+    debug!("{}", cli_args.setup);
     let adapter = Arc::new(get_adapter().await);
     let mut events = adapter.events().await?;
 
@@ -39,7 +53,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 if !name.to_lowercase().contains("timeular") {
                     continue;
                 }
-                spawn_reader(id, &adapter);
+                spawn_reader(id, &adapter, cli_args.setup);
             }
             CentralEvent::DeviceDisconnected(id) => {
                 let per = match adapter.peripheral(&id).await {
@@ -65,13 +79,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn spawn_reader(id: PeripheralId, adapter: &Arc<Adapter>) {
+fn spawn_reader(id: PeripheralId, adapter: &Arc<Adapter>, setup: bool) {
     println!("Connecting to tracker...");
 
     let adapter = adapter.clone();
 
     tokio::spawn(async move {
-        reader::read_tracker(id, adapter).await.unwrap();
+        reader::read_tracker(id, adapter, setup).await.unwrap();
     });
 }
 
@@ -83,7 +97,7 @@ async fn get_adapter() -> Adapter {
         .await
         .unwrap()
         .into_iter()
-        .nth(0)
+        .next()
         .expect("Bluetooth manager not found. Make sure bluetooth is turned on.")
 }
 
@@ -107,13 +121,25 @@ async fn get_name(per: &impl Peripheral) -> Result<String, &str> {
     }
 }
 
-fn create_logger() {
+fn create_logger(verbosity: &u8) {
+    let mut config_builder = ConfigBuilder::default();
+    let mut level_filter = LevelFilter::Off;
+
+    match verbosity {
+        0 => {}
+        1 => {
+            config_builder.add_filter_allow(String::from("timeular_reader"));
+            config_builder.add_filter_allow(String::from("reqwest"));
+            level_filter = LevelFilter::Debug;
+        }
+        _ => {
+            level_filter = LevelFilter::Trace;
+        }
+    }
+
     TermLogger::init(
-        LevelFilter::Debug,
-        ConfigBuilder::default()
-            .add_filter_allow(String::from("timeular_reader"))
-            .add_filter_allow(String::from("reqwest"))
-            .build(),
+        level_filter,
+        config_builder.build(),
         TerminalMode::Mixed,
         ColorChoice::Auto,
     )
