@@ -1,5 +1,3 @@
-use std::ops::Deref;
-
 use async_trait::async_trait;
 use chrono::{DateTime, Local};
 use log::debug;

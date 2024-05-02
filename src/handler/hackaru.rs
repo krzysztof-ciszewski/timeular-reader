@@ -2,16 +2,14 @@ pub mod config;
 pub mod http_data;
 
 use std::sync::Arc;
-
 use async_trait::async_trait;
 use chrono::{DateTime, Local};
-use cookie_store::{Cookie, CookieStore};
 use http_data::*;
 use log::debug;
 use reqwest::Client;
 use reqwest_cookie_store::CookieStoreMutex;
 use rpassword::prompt_password;
-use serde_json::to_string;
+use std::string::String;
 
 use crate::{
     handler::hackaru::config::update_config,
@@ -86,10 +84,10 @@ pub async fn create_handler() -> Hackaru {
         update_config(&config);
     }
 
-    Hackaru {
+    return Hackaru {
         client,
         config,
-    }
+    };
 }
 
 fn has_cookies(cookie_store: &Arc<CookieStoreMutex>) -> bool {
@@ -100,11 +98,10 @@ fn has_cookies(cookie_store: &Arc<CookieStoreMutex>) -> bool {
 fn save_cookies(cookie_store: &Arc<CookieStoreMutex>, config: &mut HackaruConfig) {
     let cookie_store = cookie_store.lock().unwrap();
 
-    let cookies: Vec<&Cookie> = cookie_store.iter_unexpired().map(|c| c).collect();
+    let mut json = Vec::new();
+    cookie_store.save_json(&mut json).unwrap();
 
-    let json = to_string(&cookies).unwrap();
-
-    config.cookies = json;
+    config.cookies = String::from_utf8(json).unwrap();
     update_config(&config);
 }
 
@@ -131,9 +128,10 @@ async fn auth_client(client: &Client, config: &mut HackaruConfig) {
 
     let email = config.email.clone();
 
-    let password: String = *prompt_password("Type your hackaru password: ")
+    let password: String = (*prompt_password("Type your hackaru password: ")
         .unwrap()
-        .trim();
+        .trim())
+        .to_string();
 
     let login = LoginRequest {
         user: UserRequest {
@@ -158,8 +156,6 @@ async fn auth_client(client: &Client, config: &mut HackaruConfig) {
 }
 
 fn create_cookie_store(config: &HackaruConfig) -> Arc<CookieStoreMutex> {
-    let cookies = config.get_cookies();
-    Arc::new(CookieStoreMutex::new(
-        CookieStore::from_cookies(cookies, false).unwrap(),
-    ))
+    let cookie_store = config.get_cookie_store();
+    Arc::new(CookieStoreMutex::new(cookie_store))
 }

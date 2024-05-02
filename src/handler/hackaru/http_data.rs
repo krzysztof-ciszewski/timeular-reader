@@ -43,7 +43,7 @@ impl ActivityStartRequest {
     pub fn new(description: String, project_id: u32, started_at: String) -> Self {
         ActivityStartRequest {
             activity: ActivityStartData {
-                description: description,
+                description,
                 project_id,
                 started_at,
             },
@@ -55,8 +55,8 @@ impl ActivityEndRequest {
     pub fn new(id: u32, stopped_at: String) -> Self {
         ActivityEndRequest {
             activity: ActivityEndData {
-                id: id,
-                stopped_at: stopped_at,
+                id,
+                stopped_at,
             },
         }
     }

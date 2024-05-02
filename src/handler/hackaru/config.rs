@@ -1,6 +1,4 @@
-use std::error::Error;
-
-use cookie_store::Cookie;
+use reqwest_cookie_store::CookieStore;
 use serde::{Deserialize, Serialize};
 
 use crate::config::Config;
@@ -30,14 +28,14 @@ impl Default for HackaruConfig {
 impl<'de> Config<'de> for HackaruConfig {}
 
 impl HackaruConfig {
-    pub fn get_cookies(&self) -> Vec<Result<Cookie<'static>, Box<dyn Error>>> {
+    pub fn get_cookie_store(&self) -> CookieStore {
         let cookies_str = self.cookies.as_str();
         if cookies_str.is_empty() {
-            return vec![];
+            return CookieStore::default();
         }
 
-        let cookies: Vec<Cookie> = serde_json::from_str(cookies_str).unwrap();
-        cookies.into_iter().by_ref().map(Ok).collect()
+        let mut buf: &[u8] = cookies_str.as_bytes();
+        return CookieStore::load_json(&mut buf).unwrap();
     }
 }
 

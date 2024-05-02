@@ -8,7 +8,7 @@ use futures::{Stream, StreamExt};
 use log::debug;
 
 use crate::tracker::config::Handler;
-use crate::{handler::hackaru::create_handler, tracker::config::TimeularConfig};
+use crate::handler::hackaru::create_handler;
 
 use super::config;
 
@@ -33,6 +33,7 @@ pub async fn read_tracker(
 
 async fn setup_tracker_config(tracker: &impl Peripheral) {
     println!("Entering setup mode");
+    println!("Flip the device to a side you want to set up");
     let mut notification_stream = get_notification_stream(tracker).await;
     let mut config = config::get_timeular_config();
 
@@ -68,7 +69,8 @@ async fn get_notification_stream(tracker: &impl Peripheral) -> Pin<Box<dyn Strea
         .unwrap();
 
     tracker.subscribe(&orientation_char).await.unwrap();
-    tracker.notifications().await.unwrap()
+
+    return tracker.notifications().await.unwrap();
 }
 
 async fn read_orientation(tracker: &impl Peripheral) -> Result<(), Box<dyn Error>> {
@@ -103,5 +105,5 @@ async fn read_orientation(tracker: &impl Peripheral) -> Result<(), Box<dyn Error
         prev_side = Some(side);
     }
 
-    Ok(())
+    return Ok(());
 }
