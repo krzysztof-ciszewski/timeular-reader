@@ -54,10 +54,7 @@ impl ActivityStartRequest {
 impl ActivityEndRequest {
     pub fn new(id: u32, stopped_at: String) -> Self {
         ActivityEndRequest {
-            activity: ActivityEndData {
-                id,
-                stopped_at,
-            },
+            activity: ActivityEndData { id, stopped_at },
         }
     }
 }

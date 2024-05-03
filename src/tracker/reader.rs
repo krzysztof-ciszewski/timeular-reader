@@ -1,5 +1,6 @@
 use std::{error::Error, pin::Pin, sync::Arc};
 
+use crate::handler::toggl::create_handler;
 use btleplug::api::Peripheral;
 use btleplug::api::{Central, ValueNotification};
 use btleplug::platform::{Adapter, PeripheralId};
@@ -8,7 +9,6 @@ use futures::{Stream, StreamExt};
 use log::debug;
 
 use crate::tracker::config::Handler;
-use crate::handler::hackaru::create_handler;
 
 use super::config;
 
@@ -42,7 +42,11 @@ async fn setup_tracker_config(tracker: &impl Peripheral) {
 
         let mut label = String::new();
 
-        println!("Side {}, current label: {}", &side, config.get_side(&side).label);
+        println!(
+            "Side {}, current label: {}",
+            &side,
+            config.get_side(&side).label
+        );
         println!("Please label side {}, q to finish setup", side);
         std::io::stdin().read_line(&mut label).unwrap();
         label = label.trim().to_string();
@@ -59,7 +63,9 @@ async fn setup_tracker_config(tracker: &impl Peripheral) {
     println!("Config updated!");
 }
 
-async fn get_notification_stream(tracker: &impl Peripheral) -> Pin<Box<dyn Stream<Item = ValueNotification> + Send>> {
+async fn get_notification_stream(
+    tracker: &impl Peripheral,
+) -> Pin<Box<dyn Stream<Item = ValueNotification> + Send>> {
     tracker.discover_services().await.unwrap();
 
     let chars = tracker.characteristics();
@@ -77,6 +83,7 @@ async fn read_orientation(tracker: &impl Peripheral) -> Result<(), Box<dyn Error
     let mut notification_stream = get_notification_stream(tracker).await;
 
     let config = config::get_timeular_config();
+    //TODO let user choose the tracker(maybe in setup) and get proper handler by config value
     let handler = create_handler().await;
 
     let mut prev_side: Option<u8> = None;

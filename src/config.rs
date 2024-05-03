@@ -1,7 +1,7 @@
 use std::fs;
 
 use serde::{Deserialize, Serialize};
-use toml::{Value, value::Table};
+use toml::{value::Table, Value};
 
 const CONFIG_PATH: &str = "config.toml";
 pub trait Config<'de>: Serialize + Deserialize<'de> + Default {}

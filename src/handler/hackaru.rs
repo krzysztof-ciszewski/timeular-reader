@@ -1,7 +1,6 @@
 pub mod config;
 pub mod http_data;
 
-use std::sync::Arc;
 use async_trait::async_trait;
 use chrono::{DateTime, Local};
 use http_data::*;
@@ -10,6 +9,7 @@ use reqwest::Client;
 use reqwest_cookie_store::CookieStoreMutex;
 use rpassword::prompt_password;
 use std::string::String;
+use std::sync::Arc;
 
 use crate::{
     handler::hackaru::config::update_config,
@@ -84,10 +84,7 @@ pub async fn create_handler() -> Hackaru {
         update_config(&config);
     }
 
-    return Hackaru {
-        client,
-        config,
-    };
+    return Hackaru { client, config };
 }
 
 fn has_cookies(cookie_store: &Arc<CookieStoreMutex>) -> bool {
@@ -131,13 +128,10 @@ async fn auth_client(client: &Client, config: &mut HackaruConfig) {
     let password: String = (*prompt_password("Type your hackaru password: ")
         .unwrap()
         .trim())
-        .to_string();
+    .to_string();
 
     let login = LoginRequest {
-        user: UserRequest {
-            email,
-            password,
-        },
+        user: UserRequest { email, password },
     };
 
     let res = client
