@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Local};
+use derive_more::Display;
 use log::debug;
 use serde::{Deserialize, Serialize};
 
@@ -11,9 +12,11 @@ const CONFIG_KEY: &str = "timeular";
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TimeularConfig {
     pub sides: Vec<Side>,
+    pub handler: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Display, PartialEq)]
+#[display(fmt = "{} {}", side_num, label)]
 pub struct Side {
     pub side_num: u8,
     pub label: String,
@@ -39,6 +42,7 @@ impl Handler for CallbackHandler {
 impl Default for TimeularConfig {
     fn default() -> Self {
         TimeularConfig {
+            handler: String::new(),
             sides: vec![
                 Side {
                     side_num: 1,

@@ -4,7 +4,7 @@ pub mod http_data;
 use async_trait::async_trait;
 use chrono::{DateTime, Local};
 use http_data::*;
-use log::debug;
+use log::{debug, info};
 use reqwest::Client;
 use reqwest_cookie_store::CookieStoreMutex;
 use rpassword::prompt_password;
@@ -17,7 +17,6 @@ use crate::{
 };
 
 use self::config::{create_config, HackaruConfig};
-
 pub struct Hackaru {
     client: Client,
     config: HackaruConfig,
@@ -72,7 +71,7 @@ impl Handler for Hackaru {
     }
 }
 
-pub async fn create_handler() -> Hackaru {
+pub async fn create_handler(_setup: bool) -> Hackaru {
     let mut config = create_config();
     let cookie_store = create_cookie_store(&config);
     let client = create_client(&cookie_store);
@@ -113,7 +112,7 @@ fn create_client(cookie_store: &Arc<CookieStoreMutex>) -> Client {
 async fn auth_client(client: &Client, config: &mut HackaruConfig) {
     if config.email.is_empty() {
         let mut email = String::new();
-        println!("Type your hackaru email");
+        info!("Type your hackaru email");
 
         std::io::stdin()
             .read_line(&mut email)

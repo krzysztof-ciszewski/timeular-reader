@@ -1,6 +1,7 @@
 use std::fs;
 
 use serde::{Deserialize, Serialize};
+use simplelog::info;
 use toml::{value::Table, Value};
 
 const CONFIG_PATH: &str = "config.toml";
@@ -28,6 +29,7 @@ pub fn update_config<'de, T: Config<'de>>(key: &str, config: &T) {
     whole_config.insert(key.to_string(), Value::try_from(config).unwrap());
 
     save_config_file(&whole_config);
+    info!("Config updated");
 }
 
 fn initialize_default_config_key<'de, T: Config<'de>>(key: &str) -> T {

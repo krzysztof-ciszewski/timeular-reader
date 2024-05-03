@@ -4,6 +4,7 @@ use log::debug;
 use reqwest::header::CONTENT_TYPE;
 use reqwest::Client;
 use rpassword::prompt_password;
+use simplelog::info;
 use tinytemplate::TinyTemplate;
 
 use crate::handler::toggl::config::Context;
@@ -19,7 +20,6 @@ pub mod config;
 pub struct Toggl {
     client: Client,
     config: TogglConfig,
-    auth: (String, String),
 }
 impl Toggl {
     fn get_time_entries_uri(&self) -> String {
@@ -38,7 +38,6 @@ impl Toggl {
 #[async_trait]
 impl Handler for Toggl {
     async fn handle(&self, side: &Side, duration: &(DateTime<Local>, DateTime<Local>)) {
-        let auth = self.auth.clone();
         let body = format!(
             r#"{{
             "created_with": "timeular_reader",
@@ -64,7 +63,7 @@ impl Handler for Toggl {
                 self.config.base_url.trim_end_matches('/'),
                 time_entries_url,
             ))
-            .basic_auth(auth.0, Some(auth.1))
+            .basic_auth(&self.config.email, Some(&self.config.password))
             .header(CONTENT_TYPE, "application/json")
             .body(body);
 
@@ -87,70 +86,71 @@ impl Handler for Toggl {
 
         let res = request_builder.send().await.unwrap();
 
-        debug!("res {}", res.text().await.unwrap());
+        debug!("Response: {}", res.text().await.unwrap());
     }
 }
 
-pub async fn create_handler() -> Toggl {
+pub async fn create_handler(setup: bool) -> Toggl {
     let mut config = create_config();
     let client = Client::builder().build().unwrap();
-    update_vendor_config(&mut config);
+    update_vendor_config(&mut config, setup);
 
-    let auth = get_auth(&mut config).await;
-    if auth.0 != config.email {
-        config.email = auth.0.clone();
-        update_config(&config);
-        debug!("config updated");
-    }
-
-    return Toggl {
-        client,
-        config,
-        auth,
-    };
+    return Toggl { client, config };
 }
 
-fn update_vendor_config(config: &mut TogglConfig) {
-    if config.workspace_id == 0 {
+fn update_vendor_config(config: &mut TogglConfig, setup: bool) {
+    if setup || config.workspace_id == 0 {
         let mut workspace_id = String::new();
-        println!("Provider your toggl workspace_id");
+        let mut message =
+            String::from_utf8("Provide your Toggl workspace id".as_bytes().to_vec()).unwrap();
+        if config.workspace_id != 0 {
+            message.push_str(
+                format!(
+                    "\ncurrent value {}, leave blank to skip",
+                    config.workspace_id
+                )
+                .as_str(),
+            );
+        }
+        info!("{message}");
 
         std::io::stdin()
             .read_line(&mut workspace_id)
             .expect("Please provide workspace_id");
+        workspace_id = workspace_id.trim().to_string();
 
-        config.workspace_id = workspace_id.parse::<u64>().unwrap();
-        update_config(&config);
+        if !workspace_id.is_empty() {
+            config.workspace_id = workspace_id.parse::<u64>().unwrap();
+            update_config(&config);
+        }
     }
 
-    if config.project_id == 0 {
+    if setup || config.project_id == 0 {
         let mut project_id = String::new();
-        println!("Provider your toggl project_id");
+        info!("Provide your toggl project_id");
 
         std::io::stdin()
             .read_line(&mut project_id)
             .expect("Please provide project_id");
 
-        config.project_id = project_id.parse::<u64>().unwrap();
+        config.project_id = project_id.trim().parse::<u64>().unwrap();
         update_config(&config);
     }
-}
 
-async fn get_auth(config: &mut TogglConfig) -> (String, String) {
-    if config.email.is_empty() {
+    if setup || config.email.is_empty() {
         let mut email = String::new();
-        println!("Type your toggl email");
+        info!("Provide your toggl email");
 
         std::io::stdin()
             .read_line(&mut email)
             .expect("Please provide email");
 
-        config.email = email;
+        config.email = email.trim().to_string();
         update_config(&config);
     }
 
-    if config.password.is_empty() {
-        let password: String = (*prompt_password("Type your toggl password: ")
+    if setup || config.password.is_empty() {
+        let password: String = (*prompt_password("Provide your toggl password: ")
             .unwrap()
             .trim())
         .to_string();
@@ -158,6 +158,4 @@ async fn get_auth(config: &mut TogglConfig) -> (String, String) {
         config.password = password;
         update_config(&config);
     }
-
-    return (config.email.clone(), config.password.clone());
 }

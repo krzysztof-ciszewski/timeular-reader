@@ -8,7 +8,7 @@ use btleplug::platform::{Adapter, Manager, PeripheralId};
 use clap::Parser;
 use futures::stream::StreamExt;
 use log::{debug, LevelFilter};
-use simplelog::{ColorChoice, ConfigBuilder, TermLogger, TerminalMode};
+use simplelog::{info, ColorChoice, ConfigBuilder, TermLogger, TerminalMode};
 
 use crate::tracker::reader;
 
@@ -23,19 +23,21 @@ struct CliArgs {
     setup: bool,
     #[clap(short, long, action = clap::ArgAction::Count)]
     verbose: u8,
+    #[clap(short, long, action)]
+    quiet: bool,
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let cli_args = CliArgs::parse();
 
-    create_logger(&cli_args.verbose);
+    create_logger(&cli_args.verbose, cli_args.quiet);
 
     debug!("{}", cli_args.setup);
     let adapter = Arc::new(get_adapter().await);
     let mut events = adapter.events().await?;
 
-    println!("Looking for Timeular Tracker");
+    info!("Looking for Timeular Tracker");
 
     adapter.start_scan(ScanFilter::default()).await?;
 
@@ -69,7 +71,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     continue;
                 }
 
-                println!("Tracker disconnected");
+                info!("Tracker disconnected");
                 break;
             }
             _ => {}
@@ -80,7 +82,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 }
 
 fn spawn_reader(id: PeripheralId, adapter: &Arc<Adapter>, setup: bool) {
-    println!("Connecting to tracker...");
+    info!("Connecting to tracker...");
 
     let adapter = adapter.clone();
 
@@ -121,9 +123,9 @@ async fn get_name(per: &impl Peripheral) -> Result<String, &str> {
     }
 }
 
-fn create_logger(verbosity: &u8) {
+fn create_logger(verbosity: &u8, quiet: bool) {
     let mut config_builder = ConfigBuilder::default();
-    let mut level_filter = LevelFilter::Off;
+    let mut level_filter = LevelFilter::Info;
 
     match verbosity {
         0 => {}
@@ -135,6 +137,9 @@ fn create_logger(verbosity: &u8) {
         _ => {
             level_filter = LevelFilter::Trace;
         }
+    }
+    if quiet {
+        level_filter = LevelFilter::Off;
     }
 
     TermLogger::init(

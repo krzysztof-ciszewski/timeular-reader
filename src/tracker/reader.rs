@@ -1,14 +1,16 @@
 use std::{error::Error, pin::Pin, sync::Arc};
 
-use crate::handler::toggl::create_handler;
+use crate::handler::Handlers;
 use btleplug::api::Peripheral;
 use btleplug::api::{Central, ValueNotification};
 use btleplug::platform::{Adapter, PeripheralId};
-use chrono::Local;
+use chrono::{DateTime, Local};
 use futures::{Stream, StreamExt};
 use log::debug;
+use simplelog::info;
+use strum::IntoEnumIterator;
 
-use crate::tracker::config::Handler;
+use crate::tracker::config::{Handler, Side};
 
 use super::config;
 
@@ -20,34 +22,45 @@ pub async fn read_tracker(
     let tracker = adapter.peripheral(&id).await.unwrap();
 
     tracker.connect().await?;
-    println!("Connected");
+    info!("Connected");
 
     if setup {
         setup_tracker_config(&tracker).await;
     }
 
-    read_orientation(&tracker).await?;
+    read_orientation(&tracker, setup).await?;
 
-    Ok(())
+    return Ok(());
 }
 
 async fn setup_tracker_config(tracker: &impl Peripheral) {
-    println!("Entering setup mode");
-    println!("Flip the device to a side you want to set up");
-    let mut notification_stream = get_notification_stream(tracker).await;
+    info!("Entering setup mode");
+
     let mut config = config::get_timeular_config();
+
+    if !config.handler.is_empty() {
+        info!("Currently used handler: {}", config.handler);
+    }
+
+    let handler = get_handler_enum();
+    if handler.is_some() {
+        config.handler = format!("{:?}", handler.unwrap()).to_string().to_lowercase();
+    }
+
+    info!("Flip the device to a side you want to set up");
+    let mut notification_stream = get_notification_stream(tracker).await;
 
     while let Some(data) = notification_stream.next().await {
         let side = data.value[0];
 
         let mut label = String::new();
 
-        println!(
+        info!(
             "Side {}, current label: {}",
             &side,
             config.get_side(&side).label
         );
-        println!("Please label side {}, q to finish setup", side);
+        info!("Please label side {}, q to finish setup", side);
         std::io::stdin().read_line(&mut label).unwrap();
         label = label.trim().to_string();
 
@@ -56,11 +69,37 @@ async fn setup_tracker_config(tracker: &impl Peripheral) {
         }
 
         config.set_side(side, label);
-        println!("Label saved, flip to new side to continue");
+        info!("Label saved, flip to new side to continue");
     }
 
     config::update_timeular_config(&config);
-    println!("Config updated!");
+}
+
+fn get_handler_enum() -> Option<Handlers> {
+    let mut message = String::from_utf8(
+        "Select handler, leave blank to skip\nAvailable options:"
+            .as_bytes()
+            .to_vec(),
+    )
+    .unwrap();
+
+    let mut i: u8 = 1;
+    for h in Handlers::iter() {
+        message.push_str(format!("\n{}: {:?}", i, h).to_lowercase().as_str());
+        i += 1;
+    }
+    info!("{message}\nType the number:");
+
+    let mut handler = String::new();
+    std::io::stdin().read_line(&mut handler).unwrap();
+    handler = handler.trim().to_string();
+    if handler.is_empty() {
+        return None;
+    }
+
+    let idx = handler.parse::<u8>().unwrap();
+
+    Some(Handlers::try_from(idx).unwrap())
 }
 
 async fn get_notification_stream(
@@ -79,31 +118,47 @@ async fn get_notification_stream(
     return tracker.notifications().await.unwrap();
 }
 
-async fn read_orientation(tracker: &impl Peripheral) -> Result<(), Box<dyn Error>> {
+async fn read_orientation(tracker: &impl Peripheral, setup: bool) -> Result<(), Box<dyn Error>> {
     let mut notification_stream = get_notification_stream(tracker).await;
 
     let config = config::get_timeular_config();
-    //TODO let user choose the tracker(maybe in setup) and get proper handler by config value
-    let handler = create_handler().await;
 
-    let mut prev_side: Option<u8> = None;
+    let handler = Handlers::try_from(&config.handler).unwrap();
+
+    let mut prev_side: Option<&Side> = None;
     let mut start_date = Local::now();
 
+    info!("Flip the device to the side you want to track");
     while let Some(data) = notification_stream.next().await {
-        let side = data.value[0];
+        let side = config.get_side(&data.value[0]);
+        info!(
+            "Currently tracking side number {} label {}",
+            side.side_num, side.label
+        );
         debug!("current side: {}, previous side: {:?}", side, prev_side);
 
-        if prev_side.is_some() && !prev_side.unwrap().eq(&side) {
+        if prev_side.is_some() && prev_side.unwrap() != side {
             let end_date = Local::now();
-            handler
-                .handle(
-                    config.get_side(&prev_side.unwrap()),
-                    &(start_date, end_date),
-                )
-                .await;
+            let duration = end_date - start_date;
+
+            info!(
+                "You spent {}h {}m {}s on {}",
+                duration.num_hours(),
+                duration.num_minutes(),
+                duration.num_seconds(),
+                prev_side.unwrap().label
+            );
+
+            handle(
+                &handler,
+                &setup,
+                &prev_side.unwrap(),
+                &(start_date, end_date),
+            )
+            .await;
         }
 
-        if !config.is_trackable(&side) {
+        if !config.is_trackable(&side.side_num) {
             prev_side = None;
             continue;
         }
@@ -113,4 +168,27 @@ async fn read_orientation(tracker: &impl Peripheral) -> Result<(), Box<dyn Error
     }
 
     return Ok(());
+}
+
+async fn handle(
+    handler: &Handlers,
+    setup: &bool,
+    side: &&Side,
+    duration: &(DateTime<Local>, DateTime<Local>),
+) {
+    match handler {
+        Handlers::Hackaru => {
+            crate::handler::hackaru::create_handler(*setup)
+                .await
+                .handle(side, duration)
+                .await
+        }
+        Handlers::Toggl => {
+            crate::handler::toggl::create_handler(*setup)
+                .await
+                .handle(side, duration)
+                .await
+        }
+        Handlers::Traggo => {}
+    }
 }
