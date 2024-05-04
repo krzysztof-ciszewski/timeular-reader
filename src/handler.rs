@@ -6,11 +6,13 @@ use crate::tracker::config::{Handler, Side};
 use chrono::{DateTime, Local};
 use serde_derive::{Deserialize, Serialize};
 use strum::EnumIter;
+use crate::handler::example::Example;
 
 pub mod clockify;
 pub mod hackaru;
 pub mod toggl;
 pub mod traggo;
+pub mod example;
 
 #[derive(Serialize, Deserialize, EnumIter, Debug)]
 pub enum Handlers {
@@ -18,6 +20,7 @@ pub enum Handlers {
     Clockify = 2,
     Traggo = 3,
     Hackaru = 4,
+    Example = 5
 }
 
 #[derive(Debug, Default)]
@@ -28,6 +31,7 @@ pub enum CreateHandler {
     Clockify(Clockify),
     Traggo(Traggo),
     Hackaru(Hackaru),
+    Example(Example),
 }
 
 impl TryFrom<u8> for Handlers {
@@ -39,6 +43,7 @@ impl TryFrom<u8> for Handlers {
             x if x == Handlers::Clockify as u8 => Ok(Handlers::Clockify),
             x if x == Handlers::Traggo as u8 => Ok(Handlers::Traggo),
             x if x == Handlers::Hackaru as u8 => Ok(Handlers::Hackaru),
+            x if x == Handlers::Example as u8 => Ok(Handlers::Example),
             _ => Err(()),
         }
     }
@@ -61,6 +66,9 @@ impl TryFrom<&String> for Handlers {
             x if x.to_lowercase() == format!("{:?}", Handlers::Hackaru).to_lowercase() => {
                 Ok(Handlers::Hackaru)
             }
+            x if x.to_lowercase() == format!("{:?}", Handlers::Example).to_lowercase() => {
+                Ok(Handlers::Example)
+            }
             _ => Err(()),
         }
     }
@@ -74,6 +82,7 @@ pub async fn get_create_handler(setup: bool, config_handler: &String) -> CreateH
         Handlers::Clockify => CreateHandler::Clockify(clockify::create_handler(setup).await),
         Handlers::Traggo => CreateHandler::Traggo(traggo::create_handler(setup).await),
         Handlers::Hackaru => CreateHandler::Hackaru(hackaru::create_handler(setup).await),
+        Handlers::Example => CreateHandler::Example(example::create_handler(setup).await),
     };
 }
 
@@ -93,6 +102,9 @@ pub async fn handle(
             h.handle(side, duration).await;
         }
         CreateHandler::Hackaru(h) => {
+            h.handle(side, duration).await;
+        }
+        CreateHandler::Example(h) => {
             h.handle(side, duration).await;
         }
         CreateHandler::None => {
