@@ -1,16 +1,16 @@
 use std::{error::Error, pin::Pin, sync::Arc};
 
-use crate::handler::Handlers;
+use crate::handler::{get_create_handler, handle, Handlers};
 use btleplug::api::Peripheral;
 use btleplug::api::{Central, ValueNotification};
 use btleplug::platform::{Adapter, PeripheralId};
-use chrono::{DateTime, Local};
+use chrono::Local;
 use futures::{Stream, StreamExt};
 use log::debug;
 use simplelog::info;
 use strum::IntoEnumIterator;
 
-use crate::tracker::config::{Handler, Side};
+use crate::tracker::config::Side;
 
 use super::config;
 
@@ -123,7 +123,7 @@ async fn read_orientation(tracker: &impl Peripheral, setup: bool) -> Result<(), 
 
     let config = config::get_timeular_config();
 
-    let handler = Handlers::try_from(&config.handler).unwrap();
+    let create_handler = get_create_handler(setup, &config.handler).await;
 
     let mut prev_side: Option<&Side> = None;
     let mut start_date = Local::now();
@@ -149,13 +149,7 @@ async fn read_orientation(tracker: &impl Peripheral, setup: bool) -> Result<(), 
                 prev_side.unwrap().label
             );
 
-            handle(
-                &handler,
-                &setup,
-                &prev_side.unwrap(),
-                &(start_date, end_date),
-            )
-            .await;
+            handle(&create_handler, side, &(start_date, end_date)).await;
         }
 
         if !config.is_trackable(&side.side_num) {
@@ -168,27 +162,4 @@ async fn read_orientation(tracker: &impl Peripheral, setup: bool) -> Result<(), 
     }
 
     return Ok(());
-}
-
-async fn handle(
-    handler: &Handlers,
-    setup: &bool,
-    side: &&Side,
-    duration: &(DateTime<Local>, DateTime<Local>),
-) {
-    match handler {
-        Handlers::Hackaru => {
-            crate::handler::hackaru::create_handler(*setup)
-                .await
-                .handle(side, duration)
-                .await
-        }
-        Handlers::Toggl => {
-            crate::handler::toggl::create_handler(*setup)
-                .await
-                .handle(side, duration)
-                .await
-        }
-        Handlers::Traggo => {}
-    }
 }

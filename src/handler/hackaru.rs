@@ -17,6 +17,7 @@ use crate::{
 };
 
 use self::config::{create_config, HackaruConfig};
+#[derive(Debug, Default)]
 pub struct Hackaru {
     client: Client,
     config: HackaruConfig,

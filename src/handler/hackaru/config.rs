@@ -5,7 +5,7 @@ use crate::config::Config;
 
 const CONFIG_KEY: &str = "hackaru";
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct HackaruConfig {
     pub hackaru_url: String,
     pub activities_rel_url: String,

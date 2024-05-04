@@ -89,7 +89,7 @@ impl TimeularConfig {
     }
 
     pub fn is_trackable(&self, side_num: &u8) -> bool {
-        self.find_side(side_num).is_some()
+        self.find_side(side_num).is_some() && !self.find_side(side_num).unwrap().label.is_empty()
     }
 
     fn find_side(&self, side_num: &u8) -> Option<&Side> {

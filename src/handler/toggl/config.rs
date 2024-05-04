@@ -8,7 +8,7 @@ const CONFIG_KEY: &str = "toggl";
 pub struct Context {
     pub workspace_id: u64,
 }
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct TogglConfig {
     pub base_url: String,
     pub time_entries_uri: String,

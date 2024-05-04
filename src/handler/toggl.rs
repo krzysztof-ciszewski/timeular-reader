@@ -17,6 +17,7 @@ use self::config::{create_config, TogglConfig};
 
 pub mod config;
 
+#[derive(Debug, Default)]
 pub struct Toggl {
     client: Client,
     config: TogglConfig,
