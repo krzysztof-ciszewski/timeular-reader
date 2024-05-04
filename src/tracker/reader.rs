@@ -149,7 +149,7 @@ async fn read_orientation(tracker: &impl Peripheral, setup: bool) -> Result<(), 
                 prev_side.unwrap().label
             );
 
-            handle(&create_handler, side, &(start_date, end_date)).await;
+            handle(&create_handler, prev_side.unwrap(), &(start_date, end_date)).await;
         }
 
         if !config.is_trackable(&side.side_num) {
