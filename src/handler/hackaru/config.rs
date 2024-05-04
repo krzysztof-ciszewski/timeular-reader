@@ -12,16 +12,18 @@ pub struct HackaruConfig {
     pub email: String,
     pub project_id: u64,
     pub cookies: String,
+    pub password: String,
 }
 
 impl Default for HackaruConfig {
     fn default() -> Self {
         HackaruConfig {
-            hackaru_url: String::from("https://api.hackaru.app/"),
+            hackaru_url: String::new(),
             activities_rel_url: String::from("v1/activities"),
             email: String::new(),
-            project_id: 1,
+            project_id: 0,
             cookies: String::new(),
+            password: String::new(),
         }
     }
 }

@@ -20,7 +20,7 @@ pub struct ActivityStartRequest {
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ActivityStartData {
     pub description: String,
-    pub project_id: u32,
+    pub project_id: u64,
     pub started_at: String,
 }
 
@@ -40,7 +40,7 @@ pub struct ActivityResponse {
 }
 
 impl ActivityStartRequest {
-    pub fn new(description: String, project_id: u32, started_at: String) -> Self {
+    pub fn new(description: String, project_id: u64, started_at: String) -> Self {
         ActivityStartRequest {
             activity: ActivityStartData {
                 description,

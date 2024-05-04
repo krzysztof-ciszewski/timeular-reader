@@ -127,35 +127,61 @@ fn update_vendor_config(config: &mut TogglConfig, setup: bool) {
 
     if setup || config.project_id == 0 {
         let mut project_id = String::new();
-        info!("Provide your toggl project_id");
+        let mut message =
+            String::from_utf8("Provide your Toggl project id".as_bytes().to_vec()).unwrap();
+        if config.project_id != 0 {
+            message.push_str(
+                format!("\ncurrent value {}, leave blank to skip", config.project_id).as_str(),
+            );
+        }
+        log::info!("{message}");
 
         std::io::stdin()
             .read_line(&mut project_id)
             .expect("Please provide project_id");
 
-        config.project_id = project_id.trim().parse::<u64>().unwrap();
-        update_config(&config);
+        project_id = project_id.trim().to_string();
+
+        if !project_id.is_empty() {
+            config.project_id = project_id.parse::<u64>().unwrap();
+            update_config(&config);
+        }
     }
 
     if setup || config.email.is_empty() {
         let mut email = String::new();
-        info!("Provide your toggl email");
+        let mut message =
+            String::from_utf8("Provide your Toggl email".as_bytes().to_vec()).unwrap();
+        if !config.email.is_empty() {
+            message.push_str(
+                format!("\ncurrent value {}, leave blank to skip", config.email).as_str(),
+            );
+        }
+        log::info!("{message}");
 
         std::io::stdin()
             .read_line(&mut email)
             .expect("Please provide email");
 
-        config.email = email.trim().to_string();
-        update_config(&config);
+        email = email.trim().to_string();
+
+        if !email.is_empty() {
+            config.email = email;
+            update_config(&config);
+        }
     }
 
     if setup || config.password.is_empty() {
-        let password: String = (*prompt_password("Provide your toggl password: ")
-            .unwrap()
-            .trim())
-        .to_string();
+        let mut message =
+            String::from_utf8("Provide your Toggl password".as_bytes().to_vec()).unwrap();
+        if !config.password.is_empty() {
+            message.push_str("\nleave blank to use current value");
+        }
+        let password: String = (*prompt_password(message).unwrap().trim()).to_string();
 
-        config.password = password;
-        update_config(&config);
+        if !password.is_empty() {
+            config.password = password;
+            update_config(&config);
+        }
     }
 }

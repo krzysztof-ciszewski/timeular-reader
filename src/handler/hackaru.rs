@@ -28,7 +28,7 @@ impl Handler for Hackaru {
         let activity_start = ActivityStartRequest {
             activity: ActivityStartData {
                 description: side.label.clone(),
-                project_id: 5867,
+                project_id: self.config.project_id,
                 started_at: duration.0.to_rfc3339(),
             },
         };
@@ -71,14 +71,14 @@ impl Handler for Hackaru {
     }
 }
 
-pub async fn create_handler(_setup: bool) -> Hackaru {
+pub async fn create_handler(setup: bool) -> Hackaru {
     let mut config = create_config();
     let cookie_store = create_cookie_store(&config);
     let client = create_client(&cookie_store);
+    setup_vendor_config(setup, &mut config).await;
 
     if !has_cookies(&cookie_store) {
-        auth_client(&client, &mut config).await;
-
+        auth(&client, &config).await;
         save_cookies(&cookie_store, &mut config);
         update_config(&config);
     }
@@ -109,28 +109,97 @@ fn create_client(cookie_store: &Arc<CookieStoreMutex>) -> Client {
         .unwrap()
 }
 
-async fn auth_client(client: &Client, config: &mut HackaruConfig) {
-    if config.email.is_empty() {
+async fn setup_vendor_config(setup: bool, config: &mut HackaruConfig) {
+    if setup || config.hackaru_url.is_empty() {
+        let mut hackaru_url = String::new();
+        let mut message =
+            String::from_utf8("Provide your hackaru url".as_bytes().to_vec()).unwrap();
+        if config.project_id != 0 {
+            message.push_str(
+                format!("\ncurrent value {}, leave blank to skip", config.project_id).as_str(),
+            );
+        }
+        info!("{message}");
+
+        std::io::stdin()
+            .read_line(&mut hackaru_url)
+            .expect("Please provide url");
+
+        hackaru_url = hackaru_url.trim().to_string();
+
+        if !hackaru_url.is_empty() {
+            config.hackaru_url = hackaru_url;
+            update_config(&config);
+        }
+    }
+
+    if setup || config.project_id == 0 {
+        let mut project_id = String::new();
+        let mut message =
+            String::from_utf8("Provide your hackaru project id".as_bytes().to_vec()).unwrap();
+        if config.project_id != 0 {
+            message.push_str(
+                format!("\ncurrent value {}, leave blank to skip", config.project_id).as_str(),
+            );
+        }
+        info!("{message}");
+
+        std::io::stdin()
+            .read_line(&mut project_id)
+            .expect("Please provide project_id");
+
+        project_id = project_id.trim().to_string();
+
+        if !project_id.is_empty() {
+            config.project_id = project_id.parse::<u64>().unwrap();
+            update_config(&config);
+        }
+    }
+
+    if setup || config.email.is_empty() {
         let mut email = String::new();
-        info!("Type your hackaru email");
+        let mut message =
+            String::from_utf8("Provide your hackaru email".as_bytes().to_vec()).unwrap();
+        if !config.email.is_empty() {
+            message.push_str(
+                format!("\ncurrent value {}, leave blank to skip", config.email).as_str(),
+            );
+        }
+        info!("{message}");
 
         std::io::stdin()
             .read_line(&mut email)
             .expect("Please provide email");
 
-        config.email = email.clone();
-        update_config(&config);
+        email = email.trim().to_string();
+
+        if !email.is_empty() {
+            config.email = email;
+            update_config(&config);
+        }
     }
 
-    let email = config.email.clone();
+    if setup || config.password.is_empty() {
+        let mut message =
+            String::from_utf8("Provide your hackaru password".as_bytes().to_vec()).unwrap();
+        if !config.password.is_empty() {
+            message.push_str("\nleave blank to use current value");
+        }
+        let password: String = (*prompt_password(message).unwrap().trim()).to_string();
 
-    let password: String = (*prompt_password("Type your hackaru password: ")
-        .unwrap()
-        .trim())
-    .to_string();
+        if !password.is_empty() {
+            config.password = password;
+            update_config(&config);
+        }
+    }
+}
 
+async fn auth(client: &Client, config: &HackaruConfig) {
     let login = LoginRequest {
-        user: UserRequest { email, password },
+        user: UserRequest {
+            email: config.email.clone(),
+            password: config.password.clone(),
+        },
     };
 
     let res = client
