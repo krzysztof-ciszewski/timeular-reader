@@ -1,6 +1,6 @@
-use async_trait::async_trait;
 use crate::handler::example::config::{create_config, update_config, ExampleConfig};
 use crate::tracker::config::{Handler, Side};
+use async_trait::async_trait;
 use chrono::{DateTime, Local};
 use log::debug;
 use reqwest::header::CONTENT_TYPE;
@@ -18,13 +18,14 @@ pub struct Example {
 #[async_trait]
 impl Handler for Example {
     async fn handle(&self, side: &Side, duration: &(DateTime<Local>, DateTime<Local>)) {
-        info!("Called Example handler with side {side} and duration {:?}", duration);
+        info!(
+            "Called Example handler with side {side} and duration {:?}",
+            duration
+        );
 
-        let response = self.client
-            .post(format!(
-                "{}",
-                self.config.base_url.trim_end_matches('/'),
-            ))
+        let response = self
+            .client
+            .post(format!("{}", self.config.base_url.trim_end_matches('/'),))
             .header(CONTENT_TYPE, "application/json")
             .header("x-api-key", &self.config.api_key)
             .send()

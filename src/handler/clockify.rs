@@ -79,7 +79,12 @@ impl Handler for Clockify {
                     .to_vec()
             )
             .unwrap(),
-            request_builder.try_clone().unwrap().build().unwrap().headers()
+            request_builder
+                .try_clone()
+                .unwrap()
+                .build()
+                .unwrap()
+                .headers()
         );
 
         let res = request_builder.send().await.unwrap();

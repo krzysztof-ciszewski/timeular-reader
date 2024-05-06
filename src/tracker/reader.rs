@@ -1,6 +1,6 @@
 use std::{error::Error, pin::Pin, sync::Arc};
 
-use crate::handler::{get_create_handler, handle, Handlers};
+use crate::handler::{get_handler, Handlers};
 use btleplug::api::Peripheral;
 use btleplug::api::{Central, ValueNotification};
 use btleplug::platform::{Adapter, PeripheralId};
@@ -10,7 +10,7 @@ use log::debug;
 use simplelog::info;
 use strum::IntoEnumIterator;
 
-use crate::tracker::config::Side;
+use crate::tracker::config::{Handler, Side};
 
 use super::config;
 
@@ -123,7 +123,8 @@ async fn read_orientation(tracker: &impl Peripheral, setup: bool) -> Result<(), 
 
     let config = config::get_timeular_config();
 
-    let create_handler = get_create_handler(setup, &config.handler).await;
+    debug!("Handler is: {}", config.handler);
+    let h: Box<dyn Handler> = get_handler(setup, &config).await;
 
     let mut prev_side: Option<&Side> = None;
     let mut start_date = Local::now();
@@ -149,7 +150,7 @@ async fn read_orientation(tracker: &impl Peripheral, setup: bool) -> Result<(), 
                 prev_side.unwrap().label
             );
 
-            handle(&create_handler, prev_side.unwrap(), &(start_date, end_date)).await;
+            h.handle(prev_side.unwrap(), &(start_date, end_date)).await;
         }
 
         if !config.is_trackable(&side.side_num) {

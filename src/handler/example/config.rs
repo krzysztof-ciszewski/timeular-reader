@@ -1,5 +1,5 @@
-use serde_derive::{Deserialize, Serialize};
 use crate::config::Config;
+use serde_derive::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ExampleConfig {

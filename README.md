@@ -99,18 +99,6 @@ pub enum Handlers {
 +   Example = 5,
 }
 ```
-Then in CreateHandler, the example key has to accept the implementation of the `Handler`:
-```diff
-pub enum CreateHandler {
-    #[default]
-    None,
-    Toggl(Toggl),
-    Clockify(Clockify),
-    Traggo(Traggo),
-    Hackaru(Hackaru),
-+   Example(crate::handler::example::Example)
-}
-```
 then we need to adjust `TryFrom<u8>`:
 ```diff
 fn try_from(v: u8) -> Result<Self, Self::Error> {
@@ -147,38 +135,18 @@ fn try_from(v: &String) -> Result<Self, Self::Error> {
     }
 }
 ```
-then in `get_create_handler`:
+The last thing to do is to adjust factory method, in `get_handler`:
 ```diff
-return match handler {
-    Handlers::Toggl => CreateHandler::Toggl(toggl::create_handler(setup).await),
-    Handlers::Clockify => CreateHandler::Clockify(clockify::create_handler(setup).await),
-    Handlers::Traggo => CreateHandler::Traggo(traggo::create_handler(setup).await),
-    Handlers::Hackaru => CreateHandler::Hackaru(hackaru::create_handler(setup).await),
-+   Handlers::Example => CreateHandler::Example(example::create_handler(setup).await),
-};
-```
-and lastly `handle`:
-```diff
-    match create_handler {
-        CreateHandler::Toggl(h) => {
-            h.handle(side, duration).await;
-        }
-        CreateHandler::Clockify(h) => {
-            h.handle(side, duration).await;
-        }
-        CreateHandler::Traggo(h) => {
-            h.handle(side, duration).await;
-        }
-        CreateHandler::Hackaru(h) => {
-            h.handle(side, duration).await;
-        }
-+       CreateHandler::Example(h) => {
-+           h.handle(side, duration).await;
-+       }
-        CreateHandler::None => {
-            panic!("CreateHandler should never be none")
-        }
+pub async fn get_handler(setup: bool, config: &TimeularConfig) -> Box<dyn Handler> {
+    match config.handler.as_str() {
+        "toggl" => Box::new(toggl::create_handler(setup).await),
+        "hackaru" => Box::new(hackaru::create_handler(setup).await),
+        "clockify" => Box::new(clockify::create_handler(setup).await),
+        "traggo" => Box::new(traggo::create_handler(setup).await),
++       "example" => Box::new(example::create_handler(setup).await),
+        _ => Box::new(example::create_handler(setup).await),
     }
+}
 ```
 I have added the example tracker to the repository, you can base your module on that.
 

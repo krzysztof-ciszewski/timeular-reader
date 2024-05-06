@@ -2,6 +2,7 @@
 name = "timeular_reader"
 version = "0.1.0"
 edition = "2021"
+authors = ["Krzysztof Ciszewski"]
 
 [profile.release]
 strip = true

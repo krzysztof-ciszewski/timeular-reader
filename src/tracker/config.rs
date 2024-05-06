@@ -23,7 +23,7 @@ pub struct Side {
 }
 
 #[async_trait]
-pub trait Handler: Sync {
+pub trait Handler: Sync + Send {
     async fn handle(self: &Self, side: &Side, duration: &(DateTime<Local>, DateTime<Local>)) {
         debug!("handler\n side: {:?}\n duration {:?}", side, duration)
     }

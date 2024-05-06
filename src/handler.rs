@@ -1,18 +1,12 @@
-use crate::handler::clockify::Clockify;
-use crate::handler::hackaru::Hackaru;
-use crate::handler::toggl::Toggl;
-use crate::handler::traggo::Traggo;
-use crate::tracker::config::{Handler, Side};
-use chrono::{DateTime, Local};
+use crate::tracker::config::{Handler, TimeularConfig};
 use serde_derive::{Deserialize, Serialize};
 use strum::EnumIter;
-use crate::handler::example::Example;
 
 pub mod clockify;
+pub mod example;
 pub mod hackaru;
 pub mod toggl;
 pub mod traggo;
-pub mod example;
 
 #[derive(Serialize, Deserialize, EnumIter, Debug)]
 pub enum Handlers {
@@ -20,20 +14,8 @@ pub enum Handlers {
     Clockify = 2,
     Traggo = 3,
     Hackaru = 4,
-    Example = 5
+    Example = 5,
 }
-
-#[derive(Debug, Default)]
-pub enum CreateHandler {
-    #[default]
-    None,
-    Toggl(Toggl),
-    Clockify(Clockify),
-    Traggo(Traggo),
-    Hackaru(Hackaru),
-    Example(Example),
-}
-
 impl TryFrom<u8> for Handlers {
     type Error = ();
 
@@ -74,41 +56,13 @@ impl TryFrom<&String> for Handlers {
     }
 }
 
-pub async fn get_create_handler(setup: bool, config_handler: &String) -> CreateHandler {
-    let handler = Handlers::try_from(config_handler).unwrap();
-
-    return match handler {
-        Handlers::Toggl => CreateHandler::Toggl(toggl::create_handler(setup).await),
-        Handlers::Clockify => CreateHandler::Clockify(clockify::create_handler(setup).await),
-        Handlers::Traggo => CreateHandler::Traggo(traggo::create_handler(setup).await),
-        Handlers::Hackaru => CreateHandler::Hackaru(hackaru::create_handler(setup).await),
-        Handlers::Example => CreateHandler::Example(example::create_handler(setup).await),
-    };
-}
-
-pub async fn handle(
-    create_handler: &CreateHandler,
-    side: &Side,
-    duration: &(DateTime<Local>, DateTime<Local>),
-) {
-    match create_handler {
-        CreateHandler::Toggl(h) => {
-            h.handle(side, duration).await;
-        }
-        CreateHandler::Clockify(h) => {
-            h.handle(side, duration).await;
-        }
-        CreateHandler::Traggo(h) => {
-            h.handle(side, duration).await;
-        }
-        CreateHandler::Hackaru(h) => {
-            h.handle(side, duration).await;
-        }
-        CreateHandler::Example(h) => {
-            h.handle(side, duration).await;
-        }
-        CreateHandler::None => {
-            panic!("CreateHandler should never be none")
-        }
+pub async fn get_handler(setup: bool, config: &TimeularConfig) -> Box<dyn Handler> {
+    match config.handler.as_str() {
+        "toggl" => Box::new(toggl::create_handler(setup).await),
+        "hackaru" => Box::new(hackaru::create_handler(setup).await),
+        "clockify" => Box::new(clockify::create_handler(setup).await),
+        "traggo" => Box::new(traggo::create_handler(setup).await),
+        "example" => Box::new(example::create_handler(setup).await),
+        _ => Box::new(example::create_handler(setup).await),
     }
 }
