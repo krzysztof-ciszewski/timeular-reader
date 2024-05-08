@@ -20,6 +20,7 @@ pub struct TimeularConfig {
 pub struct Side {
     pub side_num: u8,
     pub label: String,
+    pub configurable: bool,
 }
 
 #[async_trait]
@@ -47,34 +48,72 @@ impl Default for TimeularConfig {
                 Side {
                     side_num: 1,
                     label: String::new(),
+                    configurable: true,
                 },
                 Side {
                     side_num: 2,
                     label: String::new(),
+                    configurable: true,
                 },
                 Side {
                     side_num: 3,
                     label: String::new(),
+                    configurable: true,
                 },
                 Side {
                     side_num: 4,
                     label: String::new(),
+                    configurable: true,
                 },
                 Side {
                     side_num: 5,
                     label: String::new(),
+                    configurable: true,
                 },
                 Side {
                     side_num: 6,
                     label: String::new(),
+                    configurable: true,
                 },
                 Side {
                     side_num: 7,
                     label: String::new(),
+                    configurable: true,
                 },
                 Side {
                     side_num: 8,
                     label: String::new(),
+                    configurable: true,
+                },
+                Side {
+                    side_num: 9,
+                    label: String::new(),
+                    configurable: false,
+                },
+                Side {
+                    side_num: 10,
+                    label: String::new(),
+                    configurable: false,
+                },
+                Side {
+                    side_num: 11,
+                    label: String::new(),
+                    configurable: false,
+                },
+                Side {
+                    side_num: 12,
+                    label: String::new(),
+                    configurable: false,
+                },
+                Side {
+                    side_num: 13,
+                    label: String::new(),
+                    configurable: false,
+                },
+                Side {
+                    side_num: 0,
+                    label: String::new(),
+                    configurable: false,
                 },
             ],
         }
@@ -85,7 +124,7 @@ impl<'de> Config<'de> for TimeularConfig {}
 
 impl TimeularConfig {
     pub(crate) fn get_side(&self, side_num: &u8) -> &Side {
-        &*self.find_side(side_num).unwrap()
+        self.find_side(side_num).unwrap()
     }
 
     pub fn is_trackable(&self, side_num: &u8) -> bool {
@@ -104,7 +143,11 @@ impl TimeularConfig {
         if let Some(side) = self.find_side_mut(&side_num) {
             side.label = label;
         } else {
-            self.sides.push(Side { side_num, label });
+            self.sides.push(Side {
+                side_num,
+                label,
+                configurable: true,
+            });
         }
     }
 }

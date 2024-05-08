@@ -55,6 +55,10 @@ async fn setup_tracker_config(tracker: &impl Peripheral) {
 
         let mut label = String::new();
 
+        if !config.get_side(&side).configurable {
+            continue;
+        }
+
         info!(
             "Side {}, current label: {}",
             &side,
@@ -132,10 +136,11 @@ async fn read_orientation(tracker: &impl Peripheral, setup: bool) -> Result<(), 
     info!("Flip the device to the side you want to track");
     while let Some(data) = notification_stream.next().await {
         let side = config.get_side(&data.value[0]);
-        info!(
-            "Currently tracking side number {} label {}",
-            side.side_num, side.label
-        );
+
+        if !side.label.is_empty() {
+            info!("Currently tracking {}", side.label);
+        }
+
         debug!("current side: {}, previous side: {:?}", side, prev_side);
 
         if prev_side.is_some() && prev_side.unwrap() != side {
@@ -145,8 +150,8 @@ async fn read_orientation(tracker: &impl Peripheral, setup: bool) -> Result<(), 
             info!(
                 "You spent {}h {}m {}s on {}",
                 duration.num_hours(),
-                duration.num_minutes(),
-                duration.num_seconds(),
+                duration.num_minutes() % (duration.num_hours() * 60),
+                duration.num_seconds() % (duration.num_minutes() * 60),
                 prev_side.unwrap().label
             );
 
