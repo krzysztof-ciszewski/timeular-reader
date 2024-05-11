@@ -35,22 +35,12 @@ impl TryFrom<&String> for Handlers {
     type Error = ();
 
     fn try_from(v: &String) -> Result<Self, Self::Error> {
-        match v {
-            x if x.to_lowercase() == format!("{:?}", Handlers::Toggl).to_lowercase() => {
-                Ok(Handlers::Toggl)
-            }
-            x if x.to_lowercase() == format!("{:?}", Handlers::Clockify).to_lowercase() => {
-                Ok(Handlers::Clockify)
-            }
-            x if x.to_lowercase() == format!("{:?}", Handlers::Traggo).to_lowercase() => {
-                Ok(Handlers::Traggo)
-            }
-            x if x.to_lowercase() == format!("{:?}", Handlers::Hackaru).to_lowercase() => {
-                Ok(Handlers::Hackaru)
-            }
-            x if x.to_lowercase() == format!("{:?}", Handlers::Example).to_lowercase() => {
-                Ok(Handlers::Example)
-            }
+        match v.as_str() {
+            "toggl" => Ok(Handlers::Toggl),
+            "clockify" => Ok(Handlers::Clockify),
+            "traggo" => Ok(Handlers::Traggo),
+            "hackaru" => Ok(Handlers::Hackaru),
+            "example" => Ok(Handlers::Example),
             _ => Err(()),
         }
     }
