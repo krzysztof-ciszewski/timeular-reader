@@ -54,9 +54,7 @@ fn update_vendor_config(config: &mut ExampleConfig, setup: bool) {
         let mut message =
             String::from_utf8("Provide your Example api_key".as_bytes().to_vec()).unwrap();
         if config.api_key.is_empty() {
-            message.push_str(
-                format!("\ncurrent value {}, leave blank to skip", config.api_key).as_str(),
-            );
+            message.push_str("\n leave blank to skip");
         }
         info!("{message}");
 

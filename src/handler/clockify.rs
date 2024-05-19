@@ -64,29 +64,6 @@ impl Handler for Clockify {
             .header("x-api-key", &self.config.api_key)
             .body(body);
 
-        debug!(
-            "request {}\nheaders {:?}",
-            String::from_utf8(
-                request_builder
-                    .try_clone()
-                    .unwrap()
-                    .build()
-                    .unwrap()
-                    .body()
-                    .unwrap()
-                    .as_bytes()
-                    .unwrap()
-                    .to_vec()
-            )
-            .unwrap(),
-            request_builder
-                .try_clone()
-                .unwrap()
-                .build()
-                .unwrap()
-                .headers()
-        );
-
         let res = request_builder.send().await.unwrap();
 
         debug!("Response: {}", res.text().await.unwrap());
@@ -109,7 +86,7 @@ fn update_vendor_config(config: &mut ClockifyConfig, setup: bool) {
         if !config.workspace_id.is_empty() {
             message.push_str(
                 format!(
-                    "\ncurrent value {}, leave blank to skip",
+                    "\nCurrently \"{}\", leave blank to skip",
                     config.workspace_id
                 )
                 .as_str(),
@@ -134,7 +111,7 @@ fn update_vendor_config(config: &mut ClockifyConfig, setup: bool) {
             String::from_utf8("Provide your Clockify project id".as_bytes().to_vec()).unwrap();
         if !config.project_id.is_empty() {
             message.push_str(
-                format!("\ncurrent value {}, leave blank to skip", config.project_id).as_str(),
+                format!("\nCurrently \"{}\", leave blank to skip", config.project_id).as_str(),
             );
         }
         log::info!("{message}");

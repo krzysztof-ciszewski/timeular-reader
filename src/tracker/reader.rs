@@ -4,7 +4,7 @@ use crate::handler::{get_handler, Handlers};
 use btleplug::api::Peripheral;
 use btleplug::api::{Central, ValueNotification};
 use btleplug::platform::{Adapter, PeripheralId};
-use chrono::Local;
+use chrono::{Local, TimeDelta};
 use futures::{Stream, StreamExt};
 use log::debug;
 use simplelog::info;
@@ -80,19 +80,14 @@ async fn setup_tracker_config(tracker: &impl Peripheral) {
 }
 
 fn get_handler_enum() -> Option<Handlers> {
-    let mut message = String::from_utf8(
-        "Select handler, leave blank to skip\nAvailable options:"
-            .as_bytes()
-            .to_vec(),
-    )
-    .unwrap();
+    let mut message = String::from_utf8("Available handlers:".as_bytes().to_vec()).unwrap();
 
     let mut i: u8 = 1;
     for h in Handlers::iter() {
         message.push_str(format!("\n{}: {:?}", i, h).to_lowercase().as_str());
         i += 1;
     }
-    info!("{message}\nType the number:");
+    info!("{message}\nChoose handler [1-{i}]:");
 
     let mut handler = String::new();
     std::io::stdin().read_line(&mut handler).unwrap();
@@ -147,13 +142,7 @@ async fn read_orientation(tracker: &impl Peripheral, setup: bool) -> Result<(), 
             let end_date = Local::now();
             let duration = end_date - start_date;
 
-            info!(
-                "You spent {}h {}m {}s on {}",
-                duration.num_hours(),
-                duration.num_minutes() % (duration.num_hours() * 60),
-                duration.num_seconds() % (duration.num_minutes() * 60),
-                prev_side.unwrap().label
-            );
+            log_time_spent(duration, &prev_side.unwrap().label);
 
             h.handle(prev_side.unwrap(), &(start_date, end_date)).await;
         }
@@ -168,4 +157,24 @@ async fn read_orientation(tracker: &impl Peripheral, setup: bool) -> Result<(), 
     }
 
     return Ok(());
+}
+
+fn log_time_spent(duration: TimeDelta, label: &String) {
+    let mut minutes = duration.num_minutes();
+    if duration.num_minutes() > 0 && duration.num_hours() > 0 {
+        minutes = duration.num_minutes() % (duration.num_hours() * 60);
+    }
+
+    let mut seconds = duration.num_seconds();
+    if duration.num_seconds() > 0 && duration.num_minutes() > 0 {
+        seconds = duration.num_seconds() % (duration.num_minutes() * 60);
+    }
+
+    info!(
+        "You spent {}h {}m {}s on {}",
+        duration.num_hours(),
+        minutes,
+        seconds,
+        label
+    );
 }
