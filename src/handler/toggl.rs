@@ -30,9 +30,7 @@ impl Toggl {
         let context = Context {
             workspace_id: self.config.workspace_id,
         };
-        let time_entries_url = tt.render("url", &context).unwrap();
-
-        return time_entries_url;
+        tt.render("url", &context).unwrap()
     }
 }
 
@@ -96,7 +94,7 @@ pub async fn create_handler(setup: bool) -> Toggl {
     let client = Client::builder().build().unwrap();
     update_vendor_config(&mut config, setup);
 
-    return Toggl { client, config };
+    Toggl { client, config }
 }
 
 fn update_vendor_config(config: &mut TogglConfig, setup: bool) {
@@ -122,7 +120,7 @@ fn update_vendor_config(config: &mut TogglConfig, setup: bool) {
 
         if !workspace_id.is_empty() {
             config.workspace_id = workspace_id.parse::<u64>().unwrap();
-            update_config(&config);
+            update_config(config);
         }
     }
 
@@ -145,7 +143,7 @@ fn update_vendor_config(config: &mut TogglConfig, setup: bool) {
 
         if !project_id.is_empty() {
             config.project_id = project_id.parse::<u64>().unwrap();
-            update_config(&config);
+            update_config(config);
         }
     }
 
@@ -168,7 +166,7 @@ fn update_vendor_config(config: &mut TogglConfig, setup: bool) {
 
         if !email.is_empty() {
             config.email = email;
-            update_config(&config);
+            update_config(config);
         }
     }
 
@@ -182,7 +180,7 @@ fn update_vendor_config(config: &mut TogglConfig, setup: bool) {
 
         if !password.is_empty() {
             config.password = password;
-            update_config(&config);
+            update_config(config);
         }
     }
 }

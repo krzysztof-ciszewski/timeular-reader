@@ -14,5 +14,5 @@ impl Handler for Traggo {
 }
 
 pub async fn create_handler(_setup: bool) -> Traggo {
-    return Traggo {};
+    Traggo {}
 }

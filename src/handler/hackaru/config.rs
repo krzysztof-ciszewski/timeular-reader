@@ -37,7 +37,7 @@ impl HackaruConfig {
         }
 
         let mut buf: &[u8] = cookies_str.as_bytes();
-        return CookieStore::load_json(&mut buf).unwrap();
+        CookieStore::load_json(&mut buf).unwrap()
     }
 }
 

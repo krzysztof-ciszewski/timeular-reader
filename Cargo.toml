@@ -2,6 +2,7 @@
 name = "timeular_reader"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.78"
 authors = ["Krzysztof Ciszewski"]
 
 [profile.release]
@@ -14,18 +15,16 @@ panic = "abort"
 btleplug = { version = "0.11.5", features = ["serde"] }
 tokio = { version = "1", features = ["full"] }
 futures = "0.3.21"
-serde = "1.0.137"
+serde = { version = "1.0.137", features = ["derive"] }
 log = "0.4"
 simplelog = { version = "0.12.2", features = ["paris"] }
 chrono = { version = "0.4", features = ["serde"] }
 reqwest = { version = "0.12.4", features = ["json", "cookies"] }
 async-trait = "0.1.56"
 rpassword = "7.3.1"
-serde_derive = "1.0.137"
 reqwest_cookie_store = "0.7.0"
 toml = "0.8.12"
 serde_json = "1.0"
 clap = { version = "4.5.4", features = ["derive"] }
 tinytemplate = "1.1"
-derive_more = "0.99.0"
 strum = { version = "0.26", features = ["derive"] }

@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Local};
-use derive_more::Display;
 use log::debug;
 use serde::{Deserialize, Serialize};
+use std::fmt;
 
 use crate::config::Config;
 
@@ -15,17 +15,22 @@ pub struct TimeularConfig {
     pub handler: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, Display, PartialEq)]
-#[display(fmt = "{} {}", side_num, label)]
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub struct Side {
     pub side_num: u8,
     pub label: String,
     pub configurable: bool,
 }
 
+impl fmt::Display for Side {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{} {}", self.side_num, self.label)
+    }
+}
+
 #[async_trait]
 pub trait Handler: Sync + Send {
-    async fn handle(self: &Self, side: &Side, duration: &(DateTime<Local>, DateTime<Local>)) {
+    async fn handle(&self, side: &Side, duration: &(DateTime<Local>, DateTime<Local>)) {
         debug!("handler\n side: {:?}\n duration {:?}", side, duration)
     }
 }
@@ -35,7 +40,7 @@ pub struct CallbackHandler {
 
 #[async_trait]
 impl Handler for CallbackHandler {
-    async fn handle(self: &Self, side: &Side, duration: &(DateTime<Local>, DateTime<Local>)) {
+    async fn handle(&self, side: &Side, duration: &(DateTime<Local>, DateTime<Local>)) {
         (self.callback)(side, duration);
     }
 }

@@ -84,7 +84,7 @@ pub async fn create_handler(setup: bool) -> Hackaru {
         update_config(&config);
     }
 
-    return Hackaru { client, config };
+    Hackaru { client, config }
 }
 
 fn has_cookies(cookie_store: &Arc<CookieStoreMutex>) -> bool {
@@ -99,13 +99,13 @@ fn save_cookies(cookie_store: &Arc<CookieStoreMutex>, config: &mut HackaruConfig
     cookie_store.save_json(&mut json).unwrap();
 
     config.cookies = String::from_utf8(json).unwrap();
-    update_config(&config);
+    update_config(config);
 }
 
 fn create_client(cookie_store: &Arc<CookieStoreMutex>) -> Client {
     Client::builder()
         .cookie_store(true)
-        .cookie_provider(Arc::clone(&cookie_store))
+        .cookie_provider(Arc::clone(cookie_store))
         .build()
         .unwrap()
 }
@@ -130,7 +130,7 @@ async fn setup_vendor_config(setup: bool, config: &mut HackaruConfig) {
 
         if !hackaru_url.is_empty() {
             config.hackaru_url = hackaru_url;
-            update_config(&config);
+            update_config(config);
         }
     }
 
@@ -153,7 +153,7 @@ async fn setup_vendor_config(setup: bool, config: &mut HackaruConfig) {
 
         if !project_id.is_empty() {
             config.project_id = project_id.parse::<u64>().unwrap();
-            update_config(&config);
+            update_config(config);
         }
     }
 
@@ -176,7 +176,7 @@ async fn setup_vendor_config(setup: bool, config: &mut HackaruConfig) {
 
         if !email.is_empty() {
             config.email = email;
-            update_config(&config);
+            update_config(config);
         }
     }
 
@@ -190,7 +190,7 @@ async fn setup_vendor_config(setup: bool, config: &mut HackaruConfig) {
 
         if !password.is_empty() {
             config.password = password;
-            update_config(&config);
+            update_config(config);
         }
     }
 }

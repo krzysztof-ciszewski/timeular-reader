@@ -14,7 +14,7 @@ pub fn get_config<'de, T: Config<'de>>(key: &str) -> T {
     ensure_file_exists();
 
     let config: Value = toml::from_str(&fs::read_to_string(get_config_path()).unwrap()).unwrap();
-    let value = config.get(&key);
+    let value = config.get(key);
 
     if value.is_none() {
         return initialize_default_config_key::<T>(key);

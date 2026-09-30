@@ -25,7 +25,7 @@ impl Handler for Example {
 
         let response = self
             .client
-            .post(format!("{}", self.config.base_url.trim_end_matches('/'),))
+            .post(self.config.base_url.trim_end_matches('/').to_string())
             .header(CONTENT_TYPE, "application/json")
             .header("x-api-key", &self.config.api_key)
             .send()
@@ -45,7 +45,7 @@ pub async fn create_handler(setup: bool) -> Example {
     let client = Client::builder().build().unwrap();
     update_vendor_config(&mut config, setup);
 
-    return Example { client, config };
+    Example { client, config }
 }
 
 fn update_vendor_config(config: &mut ExampleConfig, setup: bool) {
@@ -65,7 +65,7 @@ fn update_vendor_config(config: &mut ExampleConfig, setup: bool) {
 
         if !api_key.is_empty() {
             config.api_key = api_key;
-            update_config(&config);
+            update_config(config);
         }
     }
 }

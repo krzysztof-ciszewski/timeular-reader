@@ -142,7 +142,14 @@ pub async fn get_handler(setup: bool, config: &TimeularConfig) -> Box<dyn Handle
 I have added the example tracker to the repository, you can base your module on that.
 
 ## Build
-Simply run
+Timeular Reader requires Rust 1.78 or newer. Platform build prerequisites:
+
+- **Windows:** Visual Studio 2022 Build Tools with the MSVC C++ toolchain and Windows 11 SDK.
+- **Linux (Debian/Ubuntu):** `libdbus-1-dev` and `pkg-config`.
+- **macOS:** Xcode Command Line Tools.
+
+Then run:
+
 ```console
 cargo build
 ```

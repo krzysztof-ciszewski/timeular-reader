@@ -1,5 +1,5 @@
 use crate::tracker::config::{Handler, TimeularConfig};
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use strum::EnumIter;
 
 pub mod clockify;
