@@ -30,7 +30,7 @@ pub async fn read_tracker(
 
     read_orientation(&tracker, setup).await?;
 
-    return Ok(());
+    Ok(())
 }
 
 async fn setup_tracker_config(tracker: &impl Peripheral) {
@@ -112,9 +112,9 @@ async fn get_notification_stream(
         .find(|c| c.uuid.to_string().as_str() == config::ORIENTATION_CHARACTERISTIC_UUID)
         .unwrap();
 
-    tracker.subscribe(&orientation_char).await.unwrap();
+    tracker.subscribe(orientation_char).await.unwrap();
 
-    return tracker.notifications().await.unwrap();
+    tracker.notifications().await.unwrap()
 }
 
 async fn read_orientation(tracker: &impl Peripheral, setup: bool) -> Result<(), Box<dyn Error>> {
@@ -156,7 +156,7 @@ async fn read_orientation(tracker: &impl Peripheral, setup: bool) -> Result<(), 
         prev_side = Some(side);
     }
 
-    return Ok(());
+    Ok(())
 }
 
 fn log_time_spent(duration: TimeDelta, label: &String) {

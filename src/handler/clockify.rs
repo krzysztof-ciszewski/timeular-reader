@@ -31,7 +31,7 @@ impl Clockify {
         let mut context = HashMap::new();
         context.insert("workspace_id", &self.config.workspace_id);
 
-        return tt.render("url", &context).unwrap();
+        tt.render("url", &context).unwrap()
     }
 }
 
@@ -75,7 +75,7 @@ pub async fn create_handler(setup: bool) -> Clockify {
     let client = Client::builder().build().unwrap();
     update_vendor_config(&mut config, setup);
 
-    return Clockify { client, config };
+    Clockify { client, config }
 }
 
 fn update_vendor_config(config: &mut ClockifyConfig, setup: bool) {
@@ -101,7 +101,7 @@ fn update_vendor_config(config: &mut ClockifyConfig, setup: bool) {
 
         if !workspace_id.is_empty() {
             config.workspace_id = workspace_id;
-            update_config(&config);
+            update_config(config);
         }
     }
 
@@ -124,7 +124,7 @@ fn update_vendor_config(config: &mut ClockifyConfig, setup: bool) {
 
         if !project_id.is_empty() {
             config.project_id = project_id;
-            update_config(&config);
+            update_config(config);
         }
     }
 
@@ -138,7 +138,7 @@ fn update_vendor_config(config: &mut ClockifyConfig, setup: bool) {
 
         if !api_key.is_empty() {
             config.api_key = api_key;
-            update_config(&config);
+            update_config(config);
         }
     }
 }
