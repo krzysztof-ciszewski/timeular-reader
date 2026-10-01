@@ -48,11 +48,11 @@ impl TryFrom<&String> for Handlers {
 
 pub async fn get_handler(setup: bool, config: &TimeularConfig) -> Box<dyn Handler> {
     match config.handler.as_str() {
-        "toggl" => Box::new(toggl::create_handler(setup).await),
-        "hackaru" => Box::new(hackaru::create_handler(setup).await),
-        "clockify" => Box::new(clockify::create_handler(setup).await),
+        "toggl" => Box::new(toggl::create_handler(setup, &config.sides).await),
+        "hackaru" => Box::new(hackaru::create_handler(setup, &config.sides).await),
+        "clockify" => Box::new(clockify::create_handler(setup, &config.sides).await),
         "traggo" => Box::new(traggo::create_handler(setup).await),
-        "example" => Box::new(example::create_handler(setup).await),
-        _ => Box::new(example::create_handler(setup).await),
+        "example" => Box::new(example::create_handler(setup, &config.sides).await),
+        _ => Box::new(example::create_handler(setup, &config.sides).await),
     }
 }

@@ -2,6 +2,7 @@ use reqwest_cookie_store::CookieStore;
 use serde::{Deserialize, Serialize};
 
 use crate::config::Config;
+use crate::tracker::side_project::{project_for_side, SideProject};
 
 const CONFIG_KEY: &str = "hackaru";
 
@@ -13,6 +14,8 @@ pub struct HackaruConfig {
     pub project_id: u64,
     pub cookies: String,
     pub password: String,
+    #[serde(default)]
+    pub side_projects: Vec<SideProject<u64>>,
 }
 
 impl Default for HackaruConfig {
@@ -24,12 +27,17 @@ impl Default for HackaruConfig {
             project_id: 0,
             cookies: String::new(),
             password: String::new(),
+            side_projects: Vec::new(),
         }
     }
 }
 impl<'de> Config<'de> for HackaruConfig {}
 
 impl HackaruConfig {
+    pub fn project_id_for_side(&self, side_num: u8) -> u64 {
+        *project_for_side(&self.side_projects, side_num, &self.project_id)
+    }
+
     pub fn get_cookie_store(&self) -> CookieStore {
         let cookies_str = self.cookies.as_str();
         if cookies_str.is_empty() {

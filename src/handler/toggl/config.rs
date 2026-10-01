@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::config::Config;
+use crate::tracker::side_project::{project_for_side, SideProject};
 
 const CONFIG_KEY: &str = "toggl";
 
@@ -16,6 +17,14 @@ pub struct TogglConfig {
     pub password: String,
     pub project_id: u64,
     pub workspace_id: u64,
+    #[serde(default)]
+    pub side_projects: Vec<SideProject<u64>>,
+}
+
+impl TogglConfig {
+    pub fn project_id_for_side(&self, side_num: u8) -> u64 {
+        *project_for_side(&self.side_projects, side_num, &self.project_id)
+    }
 }
 
 impl Default for TogglConfig {
@@ -27,6 +36,7 @@ impl Default for TogglConfig {
             password: String::new(),
             project_id: 0,
             workspace_id: 0,
+            side_projects: Vec::new(),
         }
     }
 }

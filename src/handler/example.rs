@@ -1,5 +1,6 @@
 use crate::handler::example::config::{create_config, update_config, ExampleConfig};
 use crate::tracker::config::{Handler, Side};
+use crate::tracker::side_project::prompt_side_projects;
 use async_trait::async_trait;
 use chrono::{DateTime, Local};
 use log::debug;
@@ -19,7 +20,8 @@ pub struct Example {
 impl Handler for Example {
     async fn handle(&self, side: &Side, duration: &(DateTime<Local>, DateTime<Local>)) {
         info!(
-            "Called Example handler with side {side} and duration {:?}",
+            "Called Example handler with side {side}, project \"{}\" and duration {:?}",
+            self.config.project_id_for_side(side.side_num),
             duration
         );
 
@@ -40,15 +42,19 @@ impl Handler for Example {
     }
 }
 
-pub async fn create_handler(setup: bool) -> Example {
+pub async fn create_handler(setup: bool, sides: &[Side]) -> Example {
     let mut config = create_config();
     let client = Client::builder().build().unwrap();
-    update_vendor_config(&mut config, setup);
+    update_vendor_config(&mut config, setup, sides);
 
     Example { client, config }
 }
 
-fn update_vendor_config(config: &mut ExampleConfig, setup: bool) {
+fn update_vendor_config(config: &mut ExampleConfig, setup: bool, sides: &[Side]) {
+    if setup && prompt_side_projects("Example", sides, &mut config.side_projects) {
+        update_config(&config);
+    }
+
     if setup || config.api_key.is_empty() {
         let mut api_key = String::new();
         let mut message =

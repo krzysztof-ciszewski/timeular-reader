@@ -14,6 +14,7 @@ use std::sync::Arc;
 use crate::{
     handler::hackaru::config::update_config,
     tracker::config::{Handler, Side},
+    tracker::side_project::prompt_side_projects,
 };
 
 use self::config::{create_config, HackaruConfig};
@@ -29,7 +30,7 @@ impl Handler for Hackaru {
         let activity_start = ActivityStartRequest {
             activity: ActivityStartData {
                 description: side.label.clone(),
-                project_id: self.config.project_id,
+                project_id: self.config.project_id_for_side(side.side_num),
                 started_at: duration.0.to_rfc3339(),
             },
         };
@@ -72,11 +73,11 @@ impl Handler for Hackaru {
     }
 }
 
-pub async fn create_handler(setup: bool) -> Hackaru {
+pub async fn create_handler(setup: bool, sides: &[Side]) -> Hackaru {
     let mut config = create_config();
     let cookie_store = create_cookie_store(&config);
     let client = create_client(&cookie_store);
-    setup_vendor_config(setup, &mut config).await;
+    setup_vendor_config(setup, &mut config, sides).await;
 
     if !has_cookies(&cookie_store) {
         auth(&client, &config).await;
@@ -110,7 +111,7 @@ fn create_client(cookie_store: &Arc<CookieStoreMutex>) -> Client {
         .unwrap()
 }
 
-async fn setup_vendor_config(setup: bool, config: &mut HackaruConfig) {
+async fn setup_vendor_config(setup: bool, config: &mut HackaruConfig, sides: &[Side]) {
     if setup || config.hackaru_url.is_empty() {
         let mut hackaru_url = String::new();
         let mut message =
@@ -155,6 +156,10 @@ async fn setup_vendor_config(setup: bool, config: &mut HackaruConfig) {
             config.project_id = project_id.parse::<u64>().unwrap();
             update_config(config);
         }
+    }
+
+    if setup && prompt_side_projects("hackaru", sides, &mut config.side_projects) {
+        update_config(&config);
     }
 
     if setup || config.email.is_empty() {
