@@ -159,7 +159,7 @@ async fn setup_vendor_config(setup: bool, config: &mut HackaruConfig, sides: &[S
     }
 
     if setup && prompt_side_projects("hackaru", sides, &mut config.side_projects) {
-        update_config(&config);
+        update_config(config);
     }
 
     if setup || config.email.is_empty() {

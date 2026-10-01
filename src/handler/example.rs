@@ -52,7 +52,7 @@ pub async fn create_handler(setup: bool, sides: &[Side]) -> Example {
 
 fn update_vendor_config(config: &mut ExampleConfig, setup: bool, sides: &[Side]) {
     if setup && prompt_side_projects("Example", sides, &mut config.side_projects) {
-        update_config(&config);
+        update_config(config);
     }
 
     if setup || config.api_key.is_empty() {

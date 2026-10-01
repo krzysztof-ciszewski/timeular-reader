@@ -149,7 +149,7 @@ fn update_vendor_config(config: &mut TogglConfig, setup: bool, sides: &[Side]) {
     }
 
     if setup && prompt_side_projects("Toggl", sides, &mut config.side_projects) {
-        update_config(&config);
+        update_config(config);
     }
 
     if setup || config.email.is_empty() {

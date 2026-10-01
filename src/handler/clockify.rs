@@ -130,7 +130,7 @@ fn update_vendor_config(config: &mut ClockifyConfig, setup: bool, sides: &[Side]
     }
 
     if setup && prompt_side_projects("Clockify", sides, &mut config.side_projects) {
-        update_config(&config);
+        update_config(config);
     }
 
     if setup || config.api_key.is_empty() {
