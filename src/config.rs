@@ -35,7 +35,7 @@ pub fn update_config<'de, T: Config<'de>>(key: &str, config: &T) {
     info!("Config updated");
 }
 
-fn get_config_path() -> String {
+pub(crate) fn get_config_path() -> String {
     unsafe {
         if CONFIG_PATH.is_empty() {
             let mut path = env::current_exe()

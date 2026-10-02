@@ -1,6 +1,7 @@
 extern crate core;
 
 use std::error::Error;
+use std::path::Path;
 use std::sync::Arc;
 
 use btleplug::api::{Central, CentralEvent, Manager as _, Peripheral, ScanFilter};
@@ -19,6 +20,7 @@ pub mod tracker;
 #[derive(Parser, Debug)]
 #[clap(about, long_about = None)]
 struct CliArgs {
+    /// Run setup even if config.toml already exists.
     #[clap(short, long, action)]
     setup: bool,
     #[clap(short, long, action = clap::ArgAction::Count)]
@@ -33,7 +35,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     create_logger(&cli_args.verbose, cli_args.quiet);
 
-    debug!("{}", cli_args.setup);
+    let setup = should_setup(cli_args.setup, Path::new(&config::get_config_path()))?;
+    debug!("{}", setup);
     let adapter = Arc::new(get_adapter().await);
     let mut events = adapter.events().await?;
 
@@ -55,7 +58,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 if !name.to_lowercase().contains("timeular") {
                     continue;
                 }
-                spawn_reader(id, &adapter, cli_args.setup);
+                spawn_reader(id, &adapter, setup);
             }
             CentralEvent::DeviceDisconnected(id) => {
                 let per = match adapter.peripheral(&id).await {
@@ -79,6 +82,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
 
     Ok(())
+}
+
+fn should_setup(requested: bool, config_path: &Path) -> std::io::Result<bool> {
+    Ok(requested || !config_path.try_exists()?)
 }
 
 fn spawn_reader(id: PeripheralId, adapter: &Arc<Adapter>, setup: bool) {
@@ -149,4 +156,34 @@ fn create_logger(verbosity: &u8, quiet: bool) {
         ColorChoice::Auto,
     )
     .unwrap();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_setup;
+    use std::{env, fs, time::SystemTime};
+
+    #[test]
+    fn setup_defaults_to_missing_config_and_can_be_forced() {
+        let unique = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let config_path = env::temp_dir().join(format!(
+            "timeular-reader-config-{}-{unique}.toml",
+            std::process::id()
+        ));
+
+        assert!(should_setup(false, &config_path).unwrap());
+        assert!(should_setup(true, &config_path).unwrap());
+        assert!(!config_path.try_exists().unwrap());
+
+        fs::write(&config_path, "").unwrap();
+        let automatic = should_setup(false, &config_path);
+        let explicit = should_setup(true, &config_path);
+        fs::remove_file(&config_path).unwrap();
+
+        assert!(!automatic.unwrap());
+        assert!(explicit.unwrap());
+    }
 }

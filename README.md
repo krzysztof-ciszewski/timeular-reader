@@ -25,14 +25,16 @@ Create releases through the GitHub UI or `gh release create` using your own auth
 
 ## Usage
 
-First run the command with `--setup` flag, this will generate config and let you label the sides of your device.
+Run the command to start tracking. If `config.toml` is missing from the executable's directory, setup starts automatically to generate the config and let you label the sides of your device.
 
 ```console
-timeular-reader --setup
+timeular-reader
 ```
+Pass `--setup` (or `-s`) to run setup again even when the config file already exists.
+
 You don't have to set up all the sides, press q on a side you don't want to use and config will generate with the ones you set up.
 
-After the initial setup you can modify `config.toml`
+After the initial setup you can modify `config.toml` in the executable's directory.
 
 ### Project per side
 Toggl, Clockify, Hackaru (and the Example handler) can log each side of the tracker to a different project.
