@@ -2,6 +2,27 @@
 <p align="center">Have you bought the expensive <a href="https://timeular.com/tracker">Timeular tracker</a> and don't want to pay on top of that for their propriatery app? This project is for you. With Timeular Reader you can connnect your tracker to your favourite time tracking app.
 </p>
 
+## Installation
+
+Download the executable for your platform from [Releases](https://github.com/krzysztof-ciszewski/timeular-reader/releases):
+
+| Platform | Executable |
+| --- | --- |
+| Windows x64 | `timeular-reader-windows-x64.exe` |
+| Linux x64 | `timeular-reader-linux-x64` |
+| macOS Intel | `timeular-reader-macos-x64` |
+| macOS Apple Silicon | `timeular-reader-macos-arm64` |
+
+On Linux and macOS, run `chmod +x <downloaded-file>` before running it. You can rename the executable to `timeular-reader` (`timeular-reader.exe` on Windows) to match the commands below.
+Linux builds target Ubuntu 22.04 and require glibc 2.35 or newer, D-Bus, and OpenSSL 3 runtime libraries (on Ubuntu: `sudo apt-get install libdbus-1-3 libssl3`).
+The executables are not signed or notarized, so Windows or macOS may show a security warning.
+
+### Publishing releases
+
+Publishing a GitHub release (including a prerelease) automatically builds the tagged source and attaches the executables above once each build finishes. Saving a draft does not start a build.
+The release tag must include `.github/workflows/release.yml`. Re-running the workflow replaces assets with matching names.
+Create releases through the GitHub UI or `gh release create` using your own authentication; releases published by another workflow using `GITHUB_TOKEN` do not trigger this workflow.
+
 ## Usage
 
 First run the command with `--setup` flag, this will generate config and let you label the sides of your device.
