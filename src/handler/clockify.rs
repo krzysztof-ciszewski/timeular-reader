@@ -11,6 +11,7 @@ use tinytemplate::TinyTemplate;
 use crate::{
     handler::clockify::config::update_config,
     tracker::config::{Handler, Side},
+    tracker::side_project::prompt_side_projects,
 };
 
 use self::config::{create_config, ClockifyConfig};
@@ -45,7 +46,7 @@ impl Handler for Clockify {
             "end": "{end}",
             "description": "{label}"
         }}"#,
-            project_id = self.config.project_id,
+            project_id = self.config.project_id_for_side(side.side_num),
             start = duration.0.to_rfc3339_opts(SecondsFormat::Secs, true),
             end = duration.1.to_rfc3339_opts(SecondsFormat::Secs, true),
             label = side.label
@@ -70,15 +71,15 @@ impl Handler for Clockify {
     }
 }
 
-pub async fn create_handler(setup: bool) -> Clockify {
+pub async fn create_handler(setup: bool, sides: &[Side]) -> Clockify {
     let mut config = create_config();
     let client = Client::builder().build().unwrap();
-    update_vendor_config(&mut config, setup);
+    update_vendor_config(&mut config, setup, sides);
 
     Clockify { client, config }
 }
 
-fn update_vendor_config(config: &mut ClockifyConfig, setup: bool) {
+fn update_vendor_config(config: &mut ClockifyConfig, setup: bool, sides: &[Side]) {
     if setup || config.workspace_id.is_empty() {
         let mut workspace_id = String::new();
         let mut message =
@@ -126,6 +127,10 @@ fn update_vendor_config(config: &mut ClockifyConfig, setup: bool) {
             config.project_id = project_id;
             update_config(config);
         }
+    }
+
+    if setup && prompt_side_projects("Clockify", sides, &mut config.side_projects) {
+        update_config(config);
     }
 
     if setup || config.api_key.is_empty() {

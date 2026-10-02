@@ -8,6 +8,7 @@ use simplelog::info;
 use tinytemplate::TinyTemplate;
 
 use crate::handler::toggl::config::Context;
+use crate::tracker::side_project::prompt_side_projects;
 use crate::{
     handler::toggl::config::update_config,
     tracker::config::{Handler, Side},
@@ -46,7 +47,7 @@ impl Handler for Toggl {
             "workspace_id": {workspace_id},
             "description": "{label}"
         }}"#,
-            project_id = self.config.project_id,
+            project_id = self.config.project_id_for_side(side.side_num),
             start = duration.0.to_rfc3339_opts(SecondsFormat::Secs, true),
             stop = duration.1.to_rfc3339_opts(SecondsFormat::Secs, true),
             workspace_id = self.config.workspace_id,
@@ -89,15 +90,15 @@ impl Handler for Toggl {
     }
 }
 
-pub async fn create_handler(setup: bool) -> Toggl {
+pub async fn create_handler(setup: bool, sides: &[Side]) -> Toggl {
     let mut config = create_config();
     let client = Client::builder().build().unwrap();
-    update_vendor_config(&mut config, setup);
+    update_vendor_config(&mut config, setup, sides);
 
     Toggl { client, config }
 }
 
-fn update_vendor_config(config: &mut TogglConfig, setup: bool) {
+fn update_vendor_config(config: &mut TogglConfig, setup: bool, sides: &[Side]) {
     if setup || config.workspace_id == 0 {
         let mut workspace_id = String::new();
         let mut message =
@@ -145,6 +146,10 @@ fn update_vendor_config(config: &mut TogglConfig, setup: bool) {
             config.project_id = project_id.parse::<u64>().unwrap();
             update_config(config);
         }
+    }
+
+    if setup && prompt_side_projects("Toggl", sides, &mut config.side_projects) {
+        update_config(config);
     }
 
     if setup || config.email.is_empty() {

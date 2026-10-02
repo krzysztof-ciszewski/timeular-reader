@@ -34,6 +34,24 @@ You don't have to set up all the sides, press q on a side you don't want to use 
 
 After the initial setup you can modify `config.toml`
 
+### Project per side
+Toggl, Clockify, Hackaru (and the Example handler) can log each side of the tracker to a different project.
+During `--setup`, after the default project id, you'll be asked for a project id for every labeled side:
+- leave blank to keep the current assignment (or use the default project if there is none),
+- enter `-` to remove the side's assignment and fall back to the default project.
+
+Sides without an assignment use the handler's `project_id`. You can also edit the assignments in `config.toml` under the handler's section, using the side number from the `[timeular]` section:
+```toml
+[[toggl.side_projects]]
+side_num = 1
+project_id = 123456
+
+[[toggl.side_projects]]
+side_num = 2
+project_id = 654321
+```
+For Clockify the `project_id` is a string, e.g. `project_id = "64f1c0..."`.
+
 To control output verbosity you can pass `--verbose` or `-v`, you can add multiple `-vvv` to make it more verbose.
 
 There is also `--quiet`, `-q` mode to mute all output.
@@ -62,7 +80,7 @@ TODO
 First you need to create a new mod and register it [here](https://github.com/krzysztof-ciszewski/timeular-reader/blob/ca9ff6f24c9455988dbdd89ffbd9d4c3582f636a/src/handler.rs#L13) let's call it `example`.
 
 You create the mod by creating a file `src/handler/example.rs` and adding `pub mod example;` into the file linked above.
-The `example.rs` has to have a public function called `async create_handler(setup: bool)`, and that function has to return a struct that implements [`Handler`](https://github.com/krzysztof-ciszewski/timeular-reader/blob/ca9ff6f24c9455988dbdd89ffbd9d4c3582f636a/src/tracker/config.rs#L26)
+The `example.rs` has to have a public function called `async create_handler(setup: bool, sides: &[Side])`, and that function has to return a struct that implements [`Handler`](https://github.com/krzysztof-ciszewski/timeular-reader/blob/ca9ff6f24c9455988dbdd89ffbd9d4c3582f636a/src/tracker/config.rs#L26)
 The implementation needs annotation `#[async_trait]`
 
 It is most likely your mod will require some configuration. You can implement everything in the main `example.rs` file, but to keep it clean I recommend declaring new mod `config`.
@@ -151,12 +169,12 @@ The last thing to do is to adjust factory method, in `get_handler`:
 ```diff
 pub async fn get_handler(setup: bool, config: &TimeularConfig) -> Box<dyn Handler> {
     match config.handler.as_str() {
-        "toggl" => Box::new(toggl::create_handler(setup).await),
-        "hackaru" => Box::new(hackaru::create_handler(setup).await),
-        "clockify" => Box::new(clockify::create_handler(setup).await),
+        "toggl" => Box::new(toggl::create_handler(setup, &config.sides).await),
+        "hackaru" => Box::new(hackaru::create_handler(setup, &config.sides).await),
+        "clockify" => Box::new(clockify::create_handler(setup, &config.sides).await),
         "traggo" => Box::new(traggo::create_handler(setup).await),
-+       "example" => Box::new(example::create_handler(setup).await),
-        _ => Box::new(example::create_handler(setup).await),
++       "example" => Box::new(example::create_handler(setup, &config.sides).await),
+        _ => Box::new(example::create_handler(setup, &config.sides).await),
     }
 }
 ```
