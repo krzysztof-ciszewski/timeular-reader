@@ -78,6 +78,9 @@ TODO
 ### Traggo
 TODO
 
+### TimeTagger
+During setup, provide a TimeTagger API token and the records API URL. For TimeTagger.app, use `https://timetagger.app/api/v2/records`; for a self-hosted instance, use its `/api/v2/records` endpoint.
+
 ## Creating your own handler
 First you need to create a new mod and register it [here](https://github.com/krzysztof-ciszewski/timeular-reader/blob/ca9ff6f24c9455988dbdd89ffbd9d4c3582f636a/src/handler.rs#L13) let's call it `example`.
 

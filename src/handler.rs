@@ -5,6 +5,7 @@ use strum::EnumIter;
 pub mod clockify;
 pub mod example;
 pub mod hackaru;
+pub mod timetagger;
 pub mod toggl;
 pub mod traggo;
 
@@ -15,6 +16,7 @@ pub enum Handlers {
     Traggo = 3,
     Hackaru = 4,
     Example = 5,
+    Timetagger = 6,
 }
 impl TryFrom<u8> for Handlers {
     type Error = ();
@@ -26,6 +28,7 @@ impl TryFrom<u8> for Handlers {
             x if x == Handlers::Traggo as u8 => Ok(Handlers::Traggo),
             x if x == Handlers::Hackaru as u8 => Ok(Handlers::Hackaru),
             x if x == Handlers::Example as u8 => Ok(Handlers::Example),
+            x if x == Handlers::Timetagger as u8 => Ok(Handlers::Timetagger),
             _ => Err(()),
         }
     }
@@ -41,6 +44,7 @@ impl TryFrom<&String> for Handlers {
             "traggo" => Ok(Handlers::Traggo),
             "hackaru" => Ok(Handlers::Hackaru),
             "example" => Ok(Handlers::Example),
+            "timetagger" => Ok(Handlers::Timetagger),
             _ => Err(()),
         }
     }
@@ -53,6 +57,18 @@ pub async fn get_handler(setup: bool, config: &TimeularConfig) -> Box<dyn Handle
         "clockify" => Box::new(clockify::create_handler(setup, &config.sides).await),
         "traggo" => Box::new(traggo::create_handler(setup).await),
         "example" => Box::new(example::create_handler(setup, &config.sides).await),
+        "timetagger" => Box::new(timetagger::create_handler(setup).await),
         _ => Box::new(example::create_handler(setup, &config.sides).await),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Handlers;
+
+    #[test]
+    fn adding_timetagger_preserves_existing_handler_ids() {
+        assert!(matches!(Handlers::try_from(5), Ok(Handlers::Example)));
+        assert!(matches!(Handlers::try_from(6), Ok(Handlers::Timetagger)));
     }
 }
