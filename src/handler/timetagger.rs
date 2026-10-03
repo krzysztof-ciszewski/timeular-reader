@@ -13,7 +13,7 @@ use crate::{
     tracker::config::{Handler, Side},
 };
 
-use self::config::{create_config, TimetaggerConfig, DEFAULT_RECORDS_API_URL};
+use self::config::{create_config, TimetaggerConfig};
 
 pub mod config;
 
@@ -48,8 +48,9 @@ struct Record {
 #[async_trait]
 impl Handler for Timetagger {
     async fn handle(&self, side: &Side, duration: &(DateTime<Local>, DateTime<Local>)) {
+        let key = generate_record_key();
         let record = Record {
-            key: generate_record_key(),
+            key: key.clone(),
             t1: duration.0.timestamp(),
             t2: duration.1.timestamp(),
             ds: side.label.clone(),
@@ -82,19 +83,25 @@ impl Handler for Timetagger {
         if !status.is_success() {
             match response.text().await {
                 Ok(body) => error!("Timetagger returned HTTP {status}: {body}"),
-                Err(err) => error!("Timetagger returned HTTP {status}; failed to read response: {err}"),
+                Err(err) => {
+                    error!("Timetagger returned HTTP {status}; failed to read response: {err}")
+                }
             }
             return;
         }
 
         match response.json::<RecordsResponse>().await {
-            Ok(result) if result.failed.is_empty() => {
-                debug!("Timetagger accepted {} record(s)", result.accepted.len());
+            Ok(result)
+                if result.accepted.iter().any(|accepted| accepted == &key)
+                    && result.failed.is_empty()
+                    && result.errors.is_empty() =>
+            {
+                debug!("Timetagger accepted record {key}");
             }
             Ok(result) => {
                 error!(
-                    "Timetagger rejected record(s) {:?}: {:?}",
-                    result.failed, result.errors
+                    "Timetagger did not accept record {key}; failed: {:?}; errors: {:?}",
+                    result.failed, result.errors,
                 );
             }
             Err(err) => error!("Failed to parse Timetagger response: {err}"),
@@ -140,10 +147,7 @@ fn update_vendor_config(config: &mut TimetaggerConfig, setup: bool) {
 
     if setup || config.timetagger_url.is_empty() {
         let message = if config.timetagger_url.is_empty() {
-            format!(
-                "Provide your TimeTagger records API URL (leave blank to use the default: {})",
-                DEFAULT_RECORDS_API_URL
-            )
+            "Provide your TimeTagger records API URL".to_string()
         } else {
             format!(
                 "Provide your TimeTagger records API URL (currently {}, leave blank to keep it)",
@@ -161,9 +165,6 @@ fn update_vendor_config(config: &mut TimetaggerConfig, setup: bool) {
         if !timetagger_url.is_empty() {
             config.timetagger_url = timetagger_url.to_string();
             update_config(config);
-        } else if config.timetagger_url.is_empty() {
-            config.timetagger_url = DEFAULT_RECORDS_API_URL.to_string();
-            update_config(config);
         }
     }
 }
@@ -177,6 +178,8 @@ mod tests {
         let key = generate_record_key();
 
         assert_eq!(key.len(), RECORD_KEY_LENGTH);
-        assert!(key.chars().all(|character| character.is_ascii_alphanumeric()));
+        assert!(key
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric()));
     }
 }

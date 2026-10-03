@@ -5,9 +5,9 @@ use strum::EnumIter;
 pub mod clockify;
 pub mod example;
 pub mod hackaru;
+pub mod timetagger;
 pub mod toggl;
 pub mod traggo;
-pub mod timetagger;
 
 #[derive(Serialize, Deserialize, EnumIter, Debug)]
 pub enum Handlers {
