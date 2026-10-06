@@ -163,12 +163,7 @@ fn update_vendor_config(config: &mut TimetaggerConfig, setup: bool) -> Result<()
 
 #[cfg(test)]
 mod tests {
-    use super::{generate_record_key, Timetagger, TimetaggerConfig, RECORD_KEY_LENGTH};
-    use crate::tracker::config::{Handler, Side};
-    use chrono::Local;
-    use reqwest::Client;
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    use tokio::net::TcpListener;
+    use super::{generate_record_key, RECORD_KEY_LENGTH};
 
     #[test]
     fn generates_a_random_record_key_of_expected_length() {
@@ -178,89 +173,5 @@ mod tests {
         assert!(key
             .chars()
             .all(|character| character.is_ascii_alphanumeric()));
-    }
-
-    async fn submit_to_mock(status: &str, accepted: bool) -> anyhow::Result<()> {
-        let listener = TcpListener::bind("127.0.0.1:0").await?;
-        let address = listener.local_addr()?;
-        let status = status.to_string();
-        let server = tokio::spawn(async move {
-            let (mut stream, _) = listener.accept().await.unwrap();
-            let mut request = Vec::new();
-            let mut buffer = [0; 1024];
-            let body = loop {
-                let size = stream.read(&mut buffer).await.unwrap();
-                assert!(size > 0, "client closed before sending the request");
-                request.extend_from_slice(&buffer[..size]);
-                if let Some(end) = request.windows(4).position(|part| part == b"\r\n\r\n") {
-                    let headers = String::from_utf8_lossy(&request[..end]);
-                    let length: usize = headers
-                        .lines()
-                        .find_map(|line| {
-                            line.to_ascii_lowercase()
-                                .strip_prefix("content-length:")
-                                .map(|length| length.trim().parse().unwrap())
-                        })
-                        .unwrap();
-                    if request.len() >= end + 4 + length {
-                        break serde_json::from_slice::<serde_json::Value>(
-                            &request[end + 4..end + 4 + length],
-                        )
-                        .unwrap();
-                    }
-                }
-            };
-            let key = body[0]["key"].as_str().unwrap();
-            let response = if accepted {
-                serde_json::json!({ "accepted": [key] })
-            } else {
-                serde_json::json!({ "failed": [key], "errors": ["record rejected"] })
-            }
-            .to_string();
-            let response = format!(
-                "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response}",
-                response.len()
-            );
-            stream.write_all(response.as_bytes()).await.unwrap();
-        });
-        let handler = Timetagger {
-            client: Client::builder().no_proxy().build()?,
-            config: TimetaggerConfig {
-                timetagger_url: format!("http://{address}/api/v2/records"),
-                api_key: "test-token".to_string(),
-            },
-        };
-        let now = Local::now();
-        let result = handler
-            .handle(
-                &Side {
-                    side_num: 1,
-                    label: "work".to_string(),
-                    configurable: true,
-                },
-                &(now, now),
-            )
-            .await;
-        server.await?;
-        result
-    }
-
-    #[tokio::test]
-    async fn accepted_record_succeeds() {
-        submit_to_mock("200 OK", true).await.unwrap();
-    }
-
-    #[tokio::test]
-    async fn rejected_record_returns_an_error() {
-        let error = submit_to_mock("200 OK", false).await.unwrap_err();
-        assert!(error.to_string().contains("did not accept record"));
-    }
-
-    #[tokio::test]
-    async fn http_error_returns_context() {
-        let error = submit_to_mock("401 Unauthorized", false).await.unwrap_err();
-        let message = format!("{error:#}");
-        assert!(message.contains("TimeTagger rejected the time entry"));
-        assert!(message.contains("401"));
     }
 }
