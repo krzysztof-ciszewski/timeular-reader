@@ -1,13 +1,13 @@
 extern crate core;
 
-use std::error::Error;
 use std::sync::Arc;
 
+use anyhow::{Context as _, Result};
 use btleplug::api::{Central, CentralEvent, Manager as _, Peripheral, ScanFilter};
 use btleplug::platform::{Adapter, Manager, PeripheralId};
 use clap::Parser;
 use futures::stream::StreamExt;
-use log::{debug, LevelFilter};
+use log::{debug, error, warn, LevelFilter};
 use simplelog::{info, ColorChoice, ConfigBuilder, TermLogger, TerminalMode};
 
 use crate::tracker::reader;
@@ -28,13 +28,13 @@ struct CliArgs {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
+async fn main() -> Result<()> {
     let cli_args = CliArgs::parse();
 
-    create_logger(&cli_args.verbose, cli_args.quiet);
+    create_logger(&cli_args.verbose, cli_args.quiet)?;
 
     debug!("{}", cli_args.setup);
-    let adapter = Arc::new(get_adapter().await);
+    let adapter = Arc::new(get_adapter().await?);
     let mut events = adapter.events().await?;
 
     info!("Looking for Timeular Tracker");
@@ -46,11 +46,17 @@ async fn main() -> Result<(), Box<dyn Error>> {
             CentralEvent::DeviceDiscovered(id) => {
                 let per = match adapter.peripheral(&id).await {
                     Ok(per) => per,
-                    Err(_e) => continue,
+                    Err(error) => {
+                        warn!("Failed to inspect discovered Bluetooth device: {error}");
+                        continue;
+                    }
                 };
                 let name = match get_name(&per).await {
                     Ok(per) => per,
-                    Err(_e) => continue,
+                    Err(error) => {
+                        warn!("Failed to read discovered Bluetooth device name: {error:#}");
+                        continue;
+                    }
                 };
                 if !name.to_lowercase().contains("timeular") {
                     continue;
@@ -60,11 +66,17 @@ async fn main() -> Result<(), Box<dyn Error>> {
             CentralEvent::DeviceDisconnected(id) => {
                 let per = match adapter.peripheral(&id).await {
                     Ok(per) => per,
-                    Err(_e) => continue,
+                    Err(error) => {
+                        warn!("Failed to inspect disconnected Bluetooth device: {error}");
+                        continue;
+                    }
                 };
                 let name = match get_name(&per).await {
                     Ok(name) => name,
-                    Err(_e) => continue,
+                    Err(error) => {
+                        warn!("Failed to read disconnected Bluetooth device name: {error:#}");
+                        continue;
+                    }
                 };
 
                 if !name.to_lowercase().contains("timeular") {
@@ -87,43 +99,36 @@ fn spawn_reader(id: PeripheralId, adapter: &Arc<Adapter>, setup: bool) {
     let adapter = adapter.clone();
 
     tokio::spawn(async move {
-        reader::read_tracker(id, adapter, setup).await.unwrap();
+        if let Err(error) = reader::read_tracker(id, adapter, setup).await {
+            error!("Tracker reader stopped: {error:#}");
+        }
     });
 }
 
-async fn get_adapter() -> Adapter {
-    Manager::new()
+async fn get_adapter() -> Result<Adapter> {
+    let adapters = Manager::new()
         .await
-        .unwrap()
+        .context("failed to initialize Bluetooth manager")?
         .adapters()
         .await
-        .unwrap()
-        .into_iter()
-        .next()
-        .expect("Bluetooth manager not found. Make sure bluetooth is turned on.")
+        .context("failed to enumerate Bluetooth adapters")?;
+    adapters.into_iter().next().context(
+        "no Bluetooth adapter found; make sure Bluetooth is enabled and an adapter is available",
+    )
 }
 
-async fn get_name(per: &impl Peripheral) -> Result<String, &str> {
-    let res = match per.properties().await {
-        Ok(res) => res,
-        Err(_e) => {
-            return Err("err");
-        }
-    };
-    let per_props = match res {
-        Some(per_props) => per_props,
-        None => {
-            return Err("no props");
-        }
-    };
-
-    match per_props.local_name {
-        Some(local_name) => Ok(local_name),
-        None => Err("no name"),
-    }
+async fn get_name(per: &impl Peripheral) -> Result<String> {
+    let properties = per
+        .properties()
+        .await
+        .context("failed to read Bluetooth device properties")?
+        .context("Bluetooth device has no properties")?;
+    properties
+        .local_name
+        .context("Bluetooth device has no local name")
 }
 
-fn create_logger(verbosity: &u8, quiet: bool) {
+fn create_logger(verbosity: &u8, quiet: bool) -> Result<()> {
     let mut config_builder = ConfigBuilder::default();
     let mut level_filter = LevelFilter::Info;
 
@@ -148,5 +153,5 @@ fn create_logger(verbosity: &u8, quiet: bool) {
         TerminalMode::Mixed,
         ColorChoice::Auto,
     )
-    .unwrap();
+    .context("failed to initialize application logger")
 }

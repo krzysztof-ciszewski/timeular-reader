@@ -1,4 +1,5 @@
 use crate::config::Config;
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -20,10 +21,10 @@ impl<'de> Config<'de> for ExampleConfig {}
 
 const CONFIG_KEY: &str = "example";
 
-pub fn create_config() -> ExampleConfig {
+pub fn create_config() -> Result<ExampleConfig> {
     crate::config::get_config::<ExampleConfig>(CONFIG_KEY)
 }
 
-pub fn update_config(config: &ExampleConfig) {
-    crate::config::update_config(CONFIG_KEY, config);
+pub fn update_config(config: &ExampleConfig) -> Result<()> {
+    crate::config::update_config(CONFIG_KEY, config)
 }

@@ -1,3 +1,4 @@
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 use crate::config::Config;
@@ -32,10 +33,10 @@ impl Default for TogglConfig {
 }
 impl<'de> Config<'de> for TogglConfig {}
 
-pub fn create_config() -> TogglConfig {
+pub fn create_config() -> Result<TogglConfig> {
     crate::config::get_config::<TogglConfig>(CONFIG_KEY)
 }
 
-pub fn update_config(config: &TogglConfig) {
-    crate::config::update_config(CONFIG_KEY, config);
+pub fn update_config(config: &TogglConfig) -> Result<()> {
+    crate::config::update_config(CONFIG_KEY, config)
 }

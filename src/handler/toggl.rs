@@ -1,3 +1,4 @@
+use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use chrono::{DateTime, Local, SecondsFormat};
 use log::debug;
@@ -23,20 +24,25 @@ pub struct Toggl {
     config: TogglConfig,
 }
 impl Toggl {
-    fn get_time_entries_uri(&self) -> String {
+    fn get_time_entries_uri(&self) -> Result<String> {
         let mut tt = TinyTemplate::new();
         tt.add_template("url", self.config.time_entries_uri.trim_matches('/'))
-            .unwrap();
+            .context("invalid Toggl time-entry URL template")?;
         let context = Context {
             workspace_id: self.config.workspace_id,
         };
-        tt.render("url", &context).unwrap()
+        tt.render("url", &context)
+            .context("failed to render Toggl time-entry URL")
     }
 }
 
 #[async_trait]
 impl Handler for Toggl {
-    async fn handle(&self, side: &Side, duration: &(DateTime<Local>, DateTime<Local>)) {
+    async fn handle(
+        &self,
+        side: &Side,
+        duration: &(DateTime<Local>, DateTime<Local>),
+    ) -> Result<()> {
         let body = format!(
             r#"{{
             "created_with": "timeular_reader",
@@ -53,7 +59,7 @@ impl Handler for Toggl {
             label = side.label
         );
 
-        let time_entries_url = self.get_time_entries_uri();
+        let time_entries_url = self.get_time_entries_uri()?;
 
         let request_builder = self
             .client
@@ -67,41 +73,41 @@ impl Handler for Toggl {
             .body(body);
 
         debug!(
-            "request {}",
-            String::from_utf8(
-                request_builder
-                    .try_clone()
-                    .unwrap()
-                    .build()
-                    .unwrap()
-                    .body()
-                    .unwrap()
-                    .as_bytes()
-                    .unwrap()
-                    .to_vec()
-            )
-            .unwrap()
+            "Sending time entry to Toggl workspace {}",
+            self.config.workspace_id
         );
 
-        let res = request_builder.send().await.unwrap();
+        let res = request_builder
+            .send()
+            .await
+            .context("failed to send time entry to Toggl")?
+            .error_for_status()
+            .context("Toggl rejected the time entry")?;
 
-        debug!("Response: {}", res.text().await.unwrap());
+        debug!(
+            "Toggl response: {}",
+            res.text()
+                .await
+                .context("failed to read Toggl response body")?
+        );
+        Ok(())
     }
 }
 
-pub async fn create_handler(setup: bool) -> Toggl {
-    let mut config = create_config();
-    let client = Client::builder().build().unwrap();
-    update_vendor_config(&mut config, setup);
+pub async fn create_handler(setup: bool) -> Result<Toggl> {
+    let mut config = create_config()?;
+    let client = Client::builder()
+        .build()
+        .context("failed to create Toggl HTTP client")?;
+    update_vendor_config(&mut config, setup)?;
 
-    Toggl { client, config }
+    Ok(Toggl { client, config })
 }
 
-fn update_vendor_config(config: &mut TogglConfig, setup: bool) {
+fn update_vendor_config(config: &mut TogglConfig, setup: bool) -> Result<()> {
     if setup || config.workspace_id == 0 {
         let mut workspace_id = String::new();
-        let mut message =
-            String::from_utf8("Provide your Toggl workspace id".as_bytes().to_vec()).unwrap();
+        let mut message = String::from("Provide your Toggl workspace id");
         if config.workspace_id != 0 {
             message.push_str(
                 format!(
@@ -115,19 +121,20 @@ fn update_vendor_config(config: &mut TogglConfig, setup: bool) {
 
         std::io::stdin()
             .read_line(&mut workspace_id)
-            .expect("Please provide workspace_id");
+            .context("failed to read Toggl workspace ID")?;
         workspace_id = workspace_id.trim().to_string();
 
         if !workspace_id.is_empty() {
-            config.workspace_id = workspace_id.parse::<u64>().unwrap();
-            update_config(config);
+            config.workspace_id = workspace_id
+                .parse::<u64>()
+                .context("Toggl workspace ID must be a number")?;
+            update_config(config)?;
         }
     }
 
     if setup || config.project_id == 0 {
         let mut project_id = String::new();
-        let mut message =
-            String::from_utf8("Provide your Toggl project id".as_bytes().to_vec()).unwrap();
+        let mut message = String::from("Provide your Toggl project id");
         if config.project_id != 0 {
             message.push_str(
                 format!("\ncurrent value {}, leave blank to skip", config.project_id).as_str(),
@@ -137,20 +144,21 @@ fn update_vendor_config(config: &mut TogglConfig, setup: bool) {
 
         std::io::stdin()
             .read_line(&mut project_id)
-            .expect("Please provide project_id");
+            .context("failed to read Toggl project ID")?;
 
         project_id = project_id.trim().to_string();
 
         if !project_id.is_empty() {
-            config.project_id = project_id.parse::<u64>().unwrap();
-            update_config(config);
+            config.project_id = project_id
+                .parse::<u64>()
+                .context("Toggl project ID must be a number")?;
+            update_config(config)?;
         }
     }
 
     if setup || config.email.is_empty() {
         let mut email = String::new();
-        let mut message =
-            String::from_utf8("Provide your Toggl email".as_bytes().to_vec()).unwrap();
+        let mut message = String::from("Provide your Toggl email");
         if !config.email.is_empty() {
             message.push_str(
                 format!("\ncurrent value {}, leave blank to skip", config.email).as_str(),
@@ -160,27 +168,30 @@ fn update_vendor_config(config: &mut TogglConfig, setup: bool) {
 
         std::io::stdin()
             .read_line(&mut email)
-            .expect("Please provide email");
+            .context("failed to read Toggl email")?;
 
         email = email.trim().to_string();
 
         if !email.is_empty() {
             config.email = email;
-            update_config(config);
+            update_config(config)?;
         }
     }
 
     if setup || config.password.is_empty() {
-        let mut message =
-            String::from_utf8("Provide your Toggl password".as_bytes().to_vec()).unwrap();
+        let mut message = String::from("Provide your Toggl password");
         if !config.password.is_empty() {
             message.push_str("\nleave blank to use current value");
         }
-        let password: String = (*prompt_password(message).unwrap().trim()).to_string();
+        let password = prompt_password(message)
+            .context("failed to read Toggl password")?
+            .trim()
+            .to_string();
 
         if !password.is_empty() {
             config.password = password;
-            update_config(config);
+            update_config(config)?;
         }
     }
+    Ok(())
 }
