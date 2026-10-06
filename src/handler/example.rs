@@ -1,5 +1,6 @@
 use crate::handler::example::config::{create_config, update_config, ExampleConfig};
 use crate::tracker::config::{Handler, Side};
+use crate::tracker::side_project::prompt_side_projects;
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use chrono::{DateTime, Local};
@@ -24,7 +25,8 @@ impl Handler for Example {
         duration: &(DateTime<Local>, DateTime<Local>),
     ) -> Result<()> {
         info!(
-            "Called Example handler with side {side} and duration {:?}",
+            "Called Example handler with side {side}, project \"{}\" and duration {:?}",
+            self.config.project_id_for_side(side.side_num),
             duration
         );
 
@@ -50,17 +52,21 @@ impl Handler for Example {
     }
 }
 
-pub async fn create_handler(setup: bool) -> Result<Example> {
+pub async fn create_handler(setup: bool, sides: &[Side]) -> Result<Example> {
     let mut config = create_config()?;
     let client = Client::builder()
         .build()
         .context("failed to create Example HTTP client")?;
-    update_vendor_config(&mut config, setup)?;
+    update_vendor_config(&mut config, setup, sides)?;
 
     Ok(Example { client, config })
 }
 
-fn update_vendor_config(config: &mut ExampleConfig, setup: bool) -> Result<()> {
+fn update_vendor_config(config: &mut ExampleConfig, setup: bool, sides: &[Side]) -> Result<()> {
+    if setup && prompt_side_projects("Example", sides, &mut config.side_projects)? {
+        update_config(config)?;
+    }
+
     if setup || config.api_key.is_empty() {
         let mut api_key = String::new();
         let mut message = String::from("Provide your Example API key");

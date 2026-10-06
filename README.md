@@ -2,20 +2,63 @@
 <p align="center">Have you bought the expensive <a href="https://timeular.com/tracker">Timeular tracker</a> and don't want to pay on top of that for their propriatery app? This project is for you. With Timeular Reader you can connnect your tracker to your favourite time tracking app.
 </p>
 
+## Installation
+
+Download the executable for your platform from [Releases](https://github.com/krzysztof-ciszewski/timeular-reader/releases):
+
+| Platform | Executable |
+| --- | --- |
+| Windows x64 | `timeular-reader-windows-x64.exe` |
+| Linux x64 | `timeular-reader-linux-x64` |
+| macOS Intel | `timeular-reader-macos-x64` |
+| macOS Apple Silicon | `timeular-reader-macos-arm64` |
+
+On Linux and macOS, run `chmod +x <downloaded-file>` before running it. You can rename the executable to `timeular-reader` (`timeular-reader.exe` on Windows) to match the commands below.
+Linux builds target Ubuntu 22.04 and require glibc 2.35 or newer, D-Bus, and OpenSSL 3 runtime libraries (on Ubuntu: `sudo apt-get install libdbus-1-3 libssl3`).
+The executables are not signed or notarized, so Windows or macOS may show a security warning.
+
+### Publishing releases
+
+Publishing a GitHub release (including a prerelease) automatically builds the tagged source and attaches the executables above once each build finishes. Saving a draft does not start a build.
+The release tag must include `.github/workflows/release.yml`. Re-running the workflow replaces assets with matching names.
+Create releases through the GitHub UI or `gh release create` using your own authentication; releases published by another workflow using `GITHUB_TOKEN` do not trigger this workflow.
+
 ## Usage
 
-First run the command with `--setup` flag, this will generate config and let you label the sides of your device.
+Run the command to start tracking. If `config.toml` is missing from the executable's directory, setup starts automatically to generate the config and let you label the sides of your device.
 
 ```console
-timeular-reader --setup
+timeular-reader
 ```
+Pass `--setup` (or `-s`) to run setup again even when the config file already exists.
+
 You don't have to set up all the sides, press q on a side you don't want to use and config will generate with the ones you set up.
 
-After the initial setup you can modify `config.toml`
+After the initial setup you can modify `config.toml` in the executable's directory.
+
+### Project per side
+Toggl, Clockify, Hackaru (and the Example handler) can log each side of the tracker to a different project.
+During `--setup`, after the default project id, you'll be asked for a project id for every labeled side:
+- leave blank to keep the current assignment (or use the default project if there is none),
+- enter `-` to remove the side's assignment and fall back to the default project.
+
+Sides without an assignment use the handler's `project_id`. You can also edit the assignments in `config.toml` under the handler's section, using the side number from the `[timeular]` section:
+```toml
+[[toggl.side_projects]]
+side_num = 1
+project_id = 123456
+
+[[toggl.side_projects]]
+side_num = 2
+project_id = 654321
+```
+For Clockify the `project_id` is a string, e.g. `project_id = "64f1c0..."`.
 
 To control output verbosity you can pass `--verbose` or `-v`, you can add multiple `-vvv` to make it more verbose.
 
 There is also `--quiet`, `-q` mode to mute all output.
+
+Configuration, setup, Bluetooth, and service errors include context about the operation that failed. A reader error stops tracking and is logged without aborting the process; restart the app after correcting the problem. Failed time entries are not retried or queued yet. An unset or unknown handler is an error; use `--setup` to select one. Traggo is not implemented and returns an explicit error when asked to record time.
 
 ### Toggl
 To get your project id and workspace id, on the left panel under Manage, click Projects. Then click on the project name you want to use.
@@ -37,11 +80,14 @@ TODO
 ### Traggo
 TODO
 
+### TimeTagger
+During setup, provide a TimeTagger API token and the records API URL. For TimeTagger.app, use `https://timetagger.app/api/v2/records`; for a self-hosted instance, use its `/api/v2/records` endpoint.
+
 ## Creating your own handler
 First you need to create a new mod and register it [here](https://github.com/krzysztof-ciszewski/timeular-reader/blob/ca9ff6f24c9455988dbdd89ffbd9d4c3582f636a/src/handler.rs#L13) let's call it `example`.
 
 You create the mod by creating a file `src/handler/example.rs` and adding `pub mod example;` into the file linked above.
-The `example.rs` has to have a public function called `async create_handler(setup: bool)`, and that function has to return a struct that implements [`Handler`](https://github.com/krzysztof-ciszewski/timeular-reader/blob/ca9ff6f24c9455988dbdd89ffbd9d4c3582f636a/src/tracker/config.rs#L26)
+The `example.rs` has to have a public function called `async create_handler(setup: bool, sides: &[Side])`, returning `anyhow::Result<Example>` where `Example` implements [`Handler`](src/tracker/config.rs). `Handler::handle` returns `anyhow::Result<()>`; propagate failures with `?` and add operation-specific context with `anyhow::Context`.
 The implementation needs annotation `#[async_trait]`
 
 It is most likely your mod will require some configuration. You can implement everything in the main `example.rs` file, but to keep it clean I recommend declaring new mod `config`.
@@ -80,12 +126,12 @@ These functions can look like this:
 ```rust
 const CONFIG_KEY: &str = "example";
 
-pub fn create_config() -> ExampleConfig {
+pub fn create_config() -> anyhow::Result<ExampleConfig> {
     crate::config::get_config::<ExampleConfig>(CONFIG_KEY)
 }
 
-pub fn update_config(config: &ExampleConfig) {
-    crate::config::update_config(CONFIG_KEY, config);
+pub fn update_config(config: &ExampleConfig) -> anyhow::Result<()> {
+    crate::config::update_config(CONFIG_KEY, config)
 }
 ```
 
@@ -128,14 +174,15 @@ fn try_from(v: &String) -> Result<Self, Self::Error> {
 ```
 The last thing to do is to adjust factory method, in `get_handler`:
 ```diff
-pub async fn get_handler(setup: bool, config: &TimeularConfig) -> Box<dyn Handler> {
+pub async fn get_handler(setup: bool, config: &TimeularConfig) -> anyhow::Result<Box<dyn Handler>> {
     match config.handler.as_str() {
-        "toggl" => Box::new(toggl::create_handler(setup).await),
-        "hackaru" => Box::new(hackaru::create_handler(setup).await),
-        "clockify" => Box::new(clockify::create_handler(setup).await),
-        "traggo" => Box::new(traggo::create_handler(setup).await),
-+       "example" => Box::new(example::create_handler(setup).await),
-        _ => Box::new(example::create_handler(setup).await),
+        "toggl" => Ok(Box::new(toggl::create_handler(setup, &config.sides).await?)),
+        "hackaru" => Ok(Box::new(hackaru::create_handler(setup, &config.sides).await?)),
+        "clockify" => Ok(Box::new(clockify::create_handler(setup, &config.sides).await?)),
+        "traggo" => Ok(Box::new(traggo::create_handler(setup).await)),
+        "timetagger" => Ok(Box::new(timetagger::create_handler(setup).await?)),
++       "example" => Ok(Box::new(example::create_handler(setup, &config.sides).await?)),
+        handler => anyhow::bail!("unknown time-tracking handler: {handler}"),
     }
 }
 ```

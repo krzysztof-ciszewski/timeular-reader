@@ -48,7 +48,7 @@ pub fn update_config<'de, T: Config<'de>>(key: &str, config: &T) -> Result<()> {
     Ok(())
 }
 
-fn get_config_path() -> Result<PathBuf> {
+pub(crate) fn get_config_path() -> Result<PathBuf> {
     let executable = env::current_exe().context("failed to determine executable path")?;
     let directory = executable
         .parent()
