@@ -71,11 +71,39 @@ pub async fn get_handler(setup: bool, config: &TimeularConfig) -> AppResult<Box<
 
 #[cfg(test)]
 mod tests {
-    use super::Handlers;
+    use super::{get_handler, Handlers};
+    use crate::tracker::config::TimeularConfig;
 
     #[test]
-    fn adding_timetagger_preserves_existing_handler_ids() {
-        assert!(matches!(Handlers::try_from(5), Ok(Handlers::Example)));
-        assert!(matches!(Handlers::try_from(6), Ok(Handlers::Timetagger)));
+    fn handler_names_and_ids_round_trip_for_every_registered_handler() {
+        let handlers = [
+            ("toggl", 1),
+            ("clockify", 2),
+            ("traggo", 3),
+            ("hackaru", 4),
+            ("example", 5),
+            ("timetagger", 6),
+        ];
+
+        for (name, id) in handlers {
+            let from_name = Handlers::try_from(&name.to_string()).unwrap();
+            let from_id = Handlers::try_from(id).unwrap();
+            assert!(std::mem::discriminant(&from_name) == std::mem::discriminant(&from_id));
+        }
+
+        assert!(Handlers::try_from(0).is_err());
+        assert!(Handlers::try_from(7).is_err());
+        assert!(Handlers::try_from(&"unknown".to_string()).is_err());
+    }
+
+    #[tokio::test]
+    async fn handler_factory_rejects_unknown_names() {
+        let config = TimeularConfig {
+            sides: Vec::new(),
+            handler: "unknown".into(),
+        };
+
+        let error = get_handler(false, &config).await.err().unwrap();
+        assert!(error.to_string().contains("unknown time-tracking handler"));
     }
 }

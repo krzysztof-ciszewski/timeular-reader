@@ -83,3 +83,44 @@ fn update_vendor_config(config: &mut ExampleConfig, setup: bool, sides: &[Side])
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{config::ExampleConfig, Example};
+    use crate::{
+        test_support::{time_entry, MockServer},
+        tracker::config::Handler,
+    };
+    use reqwest::Client;
+
+    #[tokio::test]
+    async fn sends_api_key_and_surfaces_http_errors() {
+        let server = MockServer::start(2, |index, _| {
+            if index == 0 {
+                (200, "{}".into())
+            } else {
+                (500, "{}".into())
+            }
+        });
+        let config = ExampleConfig {
+            base_url: format!("{}/records", server.url()),
+            api_key: "token".into(),
+            ..ExampleConfig::default()
+        };
+        let handler = Example {
+            client: Client::new(),
+            config,
+        };
+
+        handler.handle(&time_entry(1, "Work")).await.unwrap();
+        let error = handler.handle(&time_entry(1, "Break")).await.unwrap_err();
+
+        assert!(format!("{error:#}").contains("Example API rejected the request"));
+        let requests = server.finish();
+        assert!(requests[0].starts_with("POST /records HTTP/1.1"));
+        assert!(requests[0]
+            .to_ascii_lowercase()
+            .contains("x-api-key: token"));
+        assert!(requests[1].starts_with("POST /records HTTP/1.1"));
+    }
+}

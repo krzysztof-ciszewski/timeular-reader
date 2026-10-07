@@ -2,9 +2,9 @@ use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use chrono::SecondsFormat;
 use log::debug;
-use reqwest::header::CONTENT_TYPE;
 use reqwest::Client;
 use rpassword::prompt_password;
+use serde::Serialize;
 use simplelog::info;
 use std::collections::HashMap;
 use tinytemplate::TinyTemplate;
@@ -18,6 +18,15 @@ use crate::{
 use self::config::{create_config, ClockifyConfig};
 
 pub mod config;
+
+#[derive(Serialize)]
+struct TimeEntryRequest<'a> {
+    #[serde(rename = "projectId", skip_serializing_if = "Option::is_none")]
+    project_id: Option<&'a str>,
+    start: String,
+    end: String,
+    description: &'a str,
+}
 
 #[derive(Debug, Default)]
 pub struct Clockify {
@@ -41,18 +50,13 @@ impl Clockify {
 #[async_trait]
 impl Handler for Clockify {
     async fn handle(&self, entry: &TimeEntry) -> Result<()> {
-        let body = format!(
-            r#"{{
-            "projectId": "{project_id}",
-            "start": "{start}",
-            "end": "{end}",
-            "description": "{label}"
-        }}"#,
-            project_id = self.config.project_id_for_side(entry.side.side_num),
-            start = entry.start.to_rfc3339_opts(SecondsFormat::Secs, true),
-            end = entry.end.to_rfc3339_opts(SecondsFormat::Secs, true),
-            label = entry.side.label
-        );
+        let project_id = self.config.project_id_for_side(entry.side.side_num);
+        let body = TimeEntryRequest {
+            project_id: (!project_id.is_empty()).then_some(project_id),
+            start: entry.start.to_rfc3339_opts(SecondsFormat::Secs, true),
+            end: entry.end.to_rfc3339_opts(SecondsFormat::Secs, true),
+            description: &entry.side.label,
+        };
 
         let time_entries_url = self.get_time_entries_uri()?;
 
@@ -63,9 +67,8 @@ impl Handler for Clockify {
                 self.config.base_url.trim_end_matches('/'),
                 time_entries_url,
             ))
-            .header(CONTENT_TYPE, "application/json")
             .header("x-api-key", &self.config.api_key)
-            .body(body);
+            .json(&body);
 
         let res = request_builder
             .send()
@@ -162,4 +165,65 @@ fn update_vendor_config(config: &mut ClockifyConfig, setup: bool, sides: &[Side]
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{config::ClockifyConfig, Clockify};
+    use crate::{
+        test_support::{request_body, time_entry, MockServer},
+        tracker::config::Handler,
+    };
+    use reqwest::Client;
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn posts_escaped_description_and_omits_an_empty_project_id() {
+        let server = MockServer::start(1, |_, _| (201, "{}".into()));
+        let config = ClockifyConfig {
+            base_url: server.url().to_string(),
+            time_entries_uri: "/workspaces/{workspace_id}/time-entries".into(),
+            workspace_id: "workspace-123".into(),
+            api_key: "secret".into(),
+            ..ClockifyConfig::default()
+        };
+
+        let entry = time_entry(1, "Quote: \" slash: \\ newline:\n");
+        let handler = Clockify {
+            client: Client::new(),
+            config,
+        };
+        handler.handle(&entry).await.unwrap();
+
+        let requests = server.finish();
+        let request = &requests[0];
+        assert!(request.starts_with("POST /workspaces/workspace-123/time-entries HTTP/1.1"));
+        assert!(request.to_ascii_lowercase().contains("x-api-key: secret"));
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(request_body(request)).unwrap(),
+            json!({
+                "start": entry.start.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+                "end": entry.end.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+                "description": entry.side.label
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn reports_http_rejection() {
+        let server = MockServer::start(1, |_, _| (500, "{}".into()));
+        let config = ClockifyConfig {
+            base_url: server.url().to_string(),
+            ..ClockifyConfig::default()
+        };
+
+        let handler = Clockify {
+            client: Client::new(),
+            config,
+        };
+        let error = handler.handle(&time_entry(1, "Work")).await.unwrap_err();
+
+        assert!(format!("{error:#}").contains("Clockify rejected the time entry"));
+        server.finish();
+    }
 }

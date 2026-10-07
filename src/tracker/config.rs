@@ -168,3 +168,52 @@ pub fn get_timeular_config() -> Result<TimeularConfig> {
 pub fn update_timeular_config(config: &TimeularConfig) -> Result<()> {
     crate::config::update_config(CONFIG_KEY, config)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{Side, TimeularConfig};
+
+    #[test]
+    fn default_config_contains_expected_configurable_and_fixed_sides() {
+        let config = TimeularConfig::default();
+
+        assert_eq!(config.sides.len(), 14);
+        assert!(config.sides[..8].iter().all(|side| side.configurable));
+        assert!(config.sides[8..].iter().all(|side| !side.configurable));
+        assert_eq!(config.sides.last().unwrap().side_num, 0);
+    }
+
+    #[test]
+    fn set_side_updates_existing_sides_and_inserts_missing_sides() {
+        let mut config = TimeularConfig::default();
+        config.set_side(1, "Work".into());
+        config.set_side(14, "Break".into());
+
+        assert_eq!(config.sides[0].label, "Work");
+        assert_eq!(
+            config.sides.last(),
+            Some(&Side {
+                side_num: 14,
+                label: "Break".into(),
+                configurable: true
+            })
+        );
+    }
+
+    #[test]
+    fn side_trackability_and_display_follow_label_and_number() {
+        let trackable = Side {
+            side_num: 3,
+            label: "Focus".into(),
+            configurable: true,
+        };
+        let untrackable = Side {
+            label: String::new(),
+            ..trackable.clone()
+        };
+
+        assert!(trackable.is_trackable());
+        assert!(!untrackable.is_trackable());
+        assert_eq!(trackable.to_string(), "3 Focus");
+    }
+}

@@ -248,3 +248,87 @@ fn create_cookie_store(config: &HackaruConfig) -> Result<Arc<CookieStoreMutex>> 
     let cookie_store = config.get_cookie_store()?;
     Ok(Arc::new(CookieStoreMutex::new(cookie_store)))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{config::HackaruConfig, Hackaru};
+    use crate::{
+        test_support::{request_body, time_entry, MockServer},
+        tracker::{config::Handler, side_project::SideProject},
+    };
+    use reqwest::Client;
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn starts_and_stops_an_activity_using_the_side_project() {
+        let server = MockServer::start(2, |index, _| {
+            if index == 0 {
+                (201, r#"{"id":42}"#.into())
+            } else {
+                (200, "{}".into())
+            }
+        });
+        let config = HackaruConfig {
+            hackaru_url: server.url().into(),
+            side_projects: vec![SideProject {
+                side_num: 2,
+                project_id: 99,
+            }],
+            ..HackaruConfig::default()
+        };
+
+        let entry = time_entry(2, "Design \"review\"");
+        let handler = Hackaru {
+            client: Client::new(),
+            config,
+        };
+        handler.handle(&entry).await.unwrap();
+
+        let requests = server.finish();
+        assert!(requests[0].starts_with("POST /v1/activities HTTP/1.1"));
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(request_body(&requests[0])).unwrap(),
+            json!({
+                "activity": {
+                    "description": "Design \"review\"",
+                    "project_id": 99,
+                    "started_at": entry.start.to_rfc3339()
+                }
+            })
+        );
+        assert!(requests[1].starts_with("PUT /v1/activities/42 HTTP/1.1"));
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(request_body(&requests[1])).unwrap(),
+            json!({
+                "activity": {
+                    "id": 42,
+                    "stopped_at": entry.end.to_rfc3339()
+                }
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn reports_a_failed_activity_stop() {
+        let server = MockServer::start(2, |index, _| {
+            if index == 0 {
+                (200, r#"{"id":42}"#.into())
+            } else {
+                (500, "{}".into())
+            }
+        });
+        let config = HackaruConfig {
+            hackaru_url: server.url().into(),
+            ..HackaruConfig::default()
+        };
+
+        let handler = Hackaru {
+            client: Client::new(),
+            config,
+        };
+        let error = handler.handle(&time_entry(1, "Work")).await.unwrap_err();
+
+        assert!(format!("{error:#}").contains("Hackaru rejected the activity stop"));
+        server.finish();
+    }
+}

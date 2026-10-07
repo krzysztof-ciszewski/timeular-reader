@@ -44,3 +44,41 @@ pub fn create_config() -> Result<ClockifyConfig> {
 pub fn update_config(config: &ClockifyConfig) -> Result<()> {
     crate::config::update_config(CONFIG_KEY, config)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::ClockifyConfig;
+    use crate::tracker::side_project::SideProject;
+
+    #[test]
+    fn defaults_and_side_projects_preserve_string_ids() {
+        let mut config = ClockifyConfig::default();
+        assert_eq!(config.base_url, "https://app.clockify.me");
+        assert_eq!(config.project_id_for_side(1), "");
+
+        config.project_id = "default".into();
+        config.side_projects.push(SideProject {
+            side_num: 2,
+            project_id: "side-project".into(),
+        });
+        assert_eq!(config.project_id_for_side(1), "default");
+        assert_eq!(config.project_id_for_side(2), "side-project");
+    }
+
+    #[test]
+    fn legacy_config_defaults_missing_side_projects() {
+        let config: ClockifyConfig = toml::from_str(
+            r#"
+base_url = "https://example.test"
+time_entries_uri = "entries"
+api_key = ""
+project_id = "default"
+workspace_id = "workspace"
+"#,
+        )
+        .unwrap();
+
+        assert!(config.side_projects.is_empty());
+        assert_eq!(config.project_id_for_side(1), "default");
+    }
+}

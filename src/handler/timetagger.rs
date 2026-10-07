@@ -159,7 +159,13 @@ fn update_vendor_config(config: &mut TimetaggerConfig, setup: bool) -> Result<()
 
 #[cfg(test)]
 mod tests {
-    use super::{generate_record_key, RECORD_KEY_LENGTH};
+    use super::{generate_record_key, Timetagger, RECORD_KEY_LENGTH};
+    use crate::{
+        test_support::{request_body, time_entry, MockServer},
+        tracker::config::Handler,
+    };
+    use reqwest::Client;
+    use serde_json::json;
 
     #[test]
     fn generates_a_random_record_key_of_expected_length() {
@@ -169,5 +175,63 @@ mod tests {
         assert!(key
             .chars()
             .all(|character| character.is_ascii_alphanumeric()));
+    }
+
+    #[tokio::test]
+    async fn sends_record_and_requires_server_acceptance() {
+        let server = MockServer::start(1, |_, request| {
+            let request: serde_json::Value = serde_json::from_str(request_body(request)).unwrap();
+            let key = request[0]["key"].as_str().unwrap();
+            (
+                200,
+                json!({"accepted": [key], "failed": [], "errors": []}).to_string(),
+            )
+        });
+        let config = super::config::TimetaggerConfig {
+            timetagger_url: server.url().into(),
+            api_key: "token".into(),
+        };
+        let entry = time_entry(1, "Focus");
+
+        let handler = Timetagger {
+            client: Client::new(),
+            config,
+        };
+        handler.handle(&entry).await.unwrap();
+
+        let requests = server.finish();
+        let request = &requests[0];
+        assert!(request.starts_with("PUT / HTTP/1.1"));
+        assert!(request.to_ascii_lowercase().contains("authtoken: token"));
+        let records: serde_json::Value = serde_json::from_str(request_body(request)).unwrap();
+        assert_eq!(records.as_array().unwrap().len(), 1);
+        assert_eq!(records[0]["t1"], entry.start.timestamp());
+        assert_eq!(records[0]["t2"], entry.end.timestamp());
+        assert_eq!(records[0]["ds"], entry.side.label);
+        assert_eq!(records[0]["st"], 0.0);
+        assert_eq!(records[0]["key"].as_str().unwrap().len(), RECORD_KEY_LENGTH);
+    }
+
+    #[tokio::test]
+    async fn reports_a_response_that_does_not_accept_the_record() {
+        let server = MockServer::start(1, |_, _| {
+            (
+                200,
+                r#"{"accepted":[],"failed":["record"],"errors":[]}"#.into(),
+            )
+        });
+        let config = super::config::TimetaggerConfig {
+            timetagger_url: server.url().into(),
+            ..super::config::TimetaggerConfig::default()
+        };
+
+        let handler = Timetagger {
+            client: Client::new(),
+            config,
+        };
+        let error = handler.handle(&time_entry(1, "Work")).await.unwrap_err();
+
+        assert!(format!("{error:#}").contains("TimeTagger did not accept record"));
+        server.finish();
     }
 }

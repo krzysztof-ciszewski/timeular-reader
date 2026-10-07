@@ -179,21 +179,28 @@ async fn read_orientation(tracker: &impl Peripheral, setup: bool) -> Result<()> 
 }
 
 fn log_time_spent(duration: TimeDelta, label: &String) {
-    let mut minutes = duration.num_minutes();
-    if duration.num_minutes() > 0 && duration.num_hours() > 0 {
-        minutes = duration.num_minutes() % (duration.num_hours() * 60);
-    }
+    info!("You spent {} on {}", format_time_spent(duration), label);
+}
 
-    let mut seconds = duration.num_seconds();
-    if duration.num_seconds() > 0 && duration.num_minutes() > 0 {
-        seconds = duration.num_seconds() % (duration.num_minutes() * 60);
-    }
-
-    info!(
-        "You spent {}h {}m {}s on {}",
+fn format_time_spent(duration: TimeDelta) -> String {
+    format!(
+        "{}h {}m {}s",
         duration.num_hours(),
-        minutes,
-        seconds,
-        label
-    );
+        duration.num_minutes() % 60,
+        duration.num_seconds() % 60
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::format_time_spent;
+    use chrono::TimeDelta;
+
+    #[test]
+    fn formats_duration_components_without_carrying_totals() {
+        assert_eq!(format_time_spent(TimeDelta::zero()), "0h 0m 0s");
+        assert_eq!(format_time_spent(TimeDelta::seconds(59)), "0h 0m 59s");
+        assert_eq!(format_time_spent(TimeDelta::seconds(3_661)), "1h 1m 1s");
+        assert_eq!(format_time_spent(TimeDelta::seconds(90_061)), "25h 1m 1s");
+    }
 }
