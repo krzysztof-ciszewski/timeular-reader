@@ -1,6 +1,6 @@
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
-use chrono::{DateTime, Local, SecondsFormat};
+use chrono::SecondsFormat;
 use log::debug;
 use reqwest::header::CONTENT_TYPE;
 use reqwest::Client;
@@ -11,7 +11,7 @@ use tinytemplate::TinyTemplate;
 
 use crate::{
     handler::clockify::config::update_config,
-    tracker::config::{Handler, Side},
+    tracker::config::{Handler, Side, TimeEntry},
     tracker::side_project::prompt_side_projects,
 };
 
@@ -40,11 +40,7 @@ impl Clockify {
 
 #[async_trait]
 impl Handler for Clockify {
-    async fn handle(
-        &self,
-        side: &Side,
-        duration: &(DateTime<Local>, DateTime<Local>),
-    ) -> Result<()> {
+    async fn handle(&self, entry: &TimeEntry) -> Result<()> {
         let body = format!(
             r#"{{
             "projectId": "{project_id}",
@@ -52,10 +48,10 @@ impl Handler for Clockify {
             "end": "{end}",
             "description": "{label}"
         }}"#,
-            project_id = self.config.project_id_for_side(side.side_num),
-            start = duration.0.to_rfc3339_opts(SecondsFormat::Secs, true),
-            end = duration.1.to_rfc3339_opts(SecondsFormat::Secs, true),
-            label = side.label
+            project_id = self.config.project_id_for_side(entry.side.side_num),
+            start = entry.start.to_rfc3339_opts(SecondsFormat::Secs, true),
+            end = entry.end.to_rfc3339_opts(SecondsFormat::Secs, true),
+            label = entry.side.label
         );
 
         let time_entries_url = self.get_time_entries_uri()?;

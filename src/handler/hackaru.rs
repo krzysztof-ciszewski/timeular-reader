@@ -3,7 +3,6 @@ pub mod http_data;
 
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
-use chrono::{DateTime, Local};
 use http_data::*;
 use log::{debug, info};
 use reqwest::Client;
@@ -14,7 +13,7 @@ use std::sync::Arc;
 
 use crate::{
     handler::hackaru::config::update_config,
-    tracker::config::{Handler, Side},
+    tracker::config::{Handler, Side, TimeEntry},
     tracker::side_project::prompt_side_projects,
 };
 
@@ -27,16 +26,12 @@ pub struct Hackaru {
 
 #[async_trait]
 impl Handler for Hackaru {
-    async fn handle(
-        &self,
-        side: &Side,
-        duration: &(DateTime<Local>, DateTime<Local>),
-    ) -> Result<()> {
+    async fn handle(&self, entry: &TimeEntry) -> Result<()> {
         let activity_start = ActivityStartRequest {
             activity: ActivityStartData {
-                description: side.label.clone(),
-                project_id: self.config.project_id_for_side(side.side_num),
-                started_at: duration.0.to_rfc3339(),
+                description: entry.side.label.clone(),
+                project_id: self.config.project_id_for_side(entry.side.side_num),
+                started_at: entry.start.to_rfc3339(),
             },
         };
 
@@ -61,7 +56,7 @@ impl Handler for Hackaru {
         let activity_end = ActivityEndRequest {
             activity: ActivityEndData {
                 id: response.id,
-                stopped_at: duration.1.to_rfc3339(),
+                stopped_at: entry.end.to_rfc3339(),
             },
         };
 

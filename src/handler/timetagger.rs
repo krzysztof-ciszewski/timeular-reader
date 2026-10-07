@@ -1,6 +1,6 @@
 use anyhow::{bail, Context as _, Result};
 use async_trait::async_trait;
-use chrono::{DateTime, Local, Utc};
+use chrono::Utc;
 use log::debug;
 use rand::{distributions::Alphanumeric, Rng};
 use reqwest::Client;
@@ -11,7 +11,7 @@ use std::io;
 
 use crate::{
     handler::timetagger::config::update_config,
-    tracker::config::{Handler, Side},
+    tracker::config::{Handler, TimeEntry},
 };
 
 use self::config::{create_config, TimetaggerConfig};
@@ -48,24 +48,20 @@ struct Record {
 
 #[async_trait]
 impl Handler for Timetagger {
-    async fn handle(
-        &self,
-        side: &Side,
-        duration: &(DateTime<Local>, DateTime<Local>),
-    ) -> Result<()> {
+    async fn handle(&self, entry: &TimeEntry) -> Result<()> {
         let key = generate_record_key();
         let record = Record {
             key: key.clone(),
-            t1: duration.0.timestamp(),
-            t2: duration.1.timestamp(),
-            ds: side.label.clone(),
+            t1: entry.start.timestamp(),
+            t2: entry.end.timestamp(),
+            ds: entry.side.label.clone(),
             mt: Utc::now().timestamp_millis() as f64 / 1_000.0,
             st: 0.0,
         };
 
         info!(
-            "Called Timetagger handler with side {side} and duration {:?}",
-            duration
+            "Called Timetagger handler with side {} and duration {:?}",
+            entry.side, entry
         );
 
         let response = self

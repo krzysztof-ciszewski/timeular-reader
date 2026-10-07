@@ -1,9 +1,8 @@
 use crate::handler::example::config::{create_config, update_config, ExampleConfig};
-use crate::tracker::config::{Handler, Side};
+use crate::tracker::config::{Handler, Side, TimeEntry};
 use crate::tracker::side_project::prompt_side_projects;
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
-use chrono::{DateTime, Local};
 use log::debug;
 use reqwest::header::CONTENT_TYPE;
 use reqwest::Client;
@@ -19,15 +18,12 @@ pub struct Example {
 
 #[async_trait]
 impl Handler for Example {
-    async fn handle(
-        &self,
-        side: &Side,
-        duration: &(DateTime<Local>, DateTime<Local>),
-    ) -> Result<()> {
+    async fn handle(&self, entry: &TimeEntry) -> Result<()> {
         info!(
-            "Called Example handler with side {side}, project \"{}\" and duration {:?}",
-            self.config.project_id_for_side(side.side_num),
-            duration
+            "Called Example handler with side {}, project \"{}\" and duration {:?}",
+            entry.side,
+            self.config.project_id_for_side(entry.side.side_num),
+            entry
         );
 
         let response = self

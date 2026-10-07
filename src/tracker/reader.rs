@@ -11,7 +11,8 @@ use log::{debug, warn};
 use simplelog::info;
 use strum::IntoEnumIterator;
 
-use crate::tracker::config::{Handler, Side};
+use crate::tracker::config::Handler;
+use crate::tracker::state_machine::Tracker;
 
 use super::config;
 
@@ -146,45 +147,32 @@ async fn read_orientation(tracker: &impl Peripheral, setup: bool) -> Result<()> 
     debug!("Handler is: {}", config.handler);
     let h: Box<dyn Handler> = get_handler(setup, &config).await?;
 
-    let mut prev_side: Option<&Side> = None;
-    let mut start_date = Local::now();
+    let mut tracker_state = Tracker::default();
 
     info!("Flip the device to the side you want to track");
     while let Some(data) = notification_stream.next().await {
-        let Some(side_num) = data.value.first() else {
+        let Some(side_num) = data.value.first().copied() else {
             warn!("Ignoring empty tracker orientation notification");
             continue;
         };
-        let side = config
-            .sides
-            .iter()
-            .find(|entry| entry.side_num == *side_num)
-            .with_context(|| format!("tracker reported unconfigured side {side_num}"))?;
+        let side = config.sides.iter().find(|entry| entry.side_num == side_num);
 
-        if !side.label.is_empty() {
+        if side.is_none() {
+            warn!("Tracker reported unconfigured side {side_num}");
+        }
+
+        if let Some(side) = side.filter(|side| side.is_trackable()) {
             info!("Currently tracking {}", side.label);
         }
 
-        debug!("current side: {}, previous side: {:?}", side, prev_side);
+        debug!("current side: {:?}", side);
 
-        if let Some(previous_side) = prev_side.filter(|previous_side| *previous_side != side) {
-            let end_date = Local::now();
-            let duration = end_date - start_date;
-
-            log_time_spent(duration, &previous_side.label);
-
-            h.handle(previous_side, &(start_date, end_date))
+        if let Some(entry) = tracker_state.on_side(side, Local::now()) {
+            log_time_spent(entry.end - entry.start, &entry.side.label);
+            h.handle(&entry)
                 .await
-                .with_context(|| format!("failed to record time for {}", previous_side.label))?;
+                .with_context(|| format!("failed to record time for {}", entry.side.label))?;
         }
-
-        if !config.is_trackable(&side.side_num) {
-            prev_side = None;
-            continue;
-        }
-
-        start_date = Local::now();
-        prev_side = Some(side);
     }
 
     Ok(())
