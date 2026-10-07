@@ -58,6 +58,8 @@ To control output verbosity you can pass `--verbose` or `-v`, you can add multip
 
 There is also `--quiet`, `-q` mode to mute all output.
 
+Configuration, setup, Bluetooth, and service errors include context about the operation that failed. A reader error stops tracking and is logged without aborting the process; restart the app after correcting the problem. Failed time entries are not retried or queued yet. An unset or unknown handler is an error; use `--setup` to select one. Traggo is not implemented and returns an explicit error when asked to record time.
+
 ### Toggl
 To get your project id and workspace id, on the left panel under Manage, click Projects. Then click on the project name you want to use.
 The url should look like this `https://track.toggl.com/{workspace_id}/projects/{project_id}/team`
@@ -85,7 +87,7 @@ During setup, provide a TimeTagger API token and the records API URL. For TimeTa
 First you need to create a new mod and register it [here](https://github.com/krzysztof-ciszewski/timeular-reader/blob/ca9ff6f24c9455988dbdd89ffbd9d4c3582f636a/src/handler.rs#L13) let's call it `example`.
 
 You create the mod by creating a file `src/handler/example.rs` and adding `pub mod example;` into the file linked above.
-The `example.rs` has to have a public function called `async create_handler(setup: bool, sides: &[Side])`, and that function has to return a struct that implements [`Handler`](https://github.com/krzysztof-ciszewski/timeular-reader/blob/ca9ff6f24c9455988dbdd89ffbd9d4c3582f636a/src/tracker/config.rs#L26)
+The `example.rs` has to have a public function called `async create_handler(setup: bool, sides: &[Side])`, returning `anyhow::Result<Example>` where `Example` implements [`Handler`](src/tracker/config.rs). `Handler::handle` returns `anyhow::Result<()>`; propagate failures with `?` and add operation-specific context with `anyhow::Context`.
 The implementation needs annotation `#[async_trait]`
 
 It is most likely your mod will require some configuration. You can implement everything in the main `example.rs` file, but to keep it clean I recommend declaring new mod `config`.
@@ -124,12 +126,12 @@ These functions can look like this:
 ```rust
 const CONFIG_KEY: &str = "example";
 
-pub fn create_config() -> ExampleConfig {
+pub fn create_config() -> anyhow::Result<ExampleConfig> {
     crate::config::get_config::<ExampleConfig>(CONFIG_KEY)
 }
 
-pub fn update_config(config: &ExampleConfig) {
-    crate::config::update_config(CONFIG_KEY, config);
+pub fn update_config(config: &ExampleConfig) -> anyhow::Result<()> {
+    crate::config::update_config(CONFIG_KEY, config)
 }
 ```
 
@@ -172,14 +174,15 @@ fn try_from(v: &String) -> Result<Self, Self::Error> {
 ```
 The last thing to do is to adjust factory method, in `get_handler`:
 ```diff
-pub async fn get_handler(setup: bool, config: &TimeularConfig) -> Box<dyn Handler> {
+pub async fn get_handler(setup: bool, config: &TimeularConfig) -> anyhow::Result<Box<dyn Handler>> {
     match config.handler.as_str() {
-        "toggl" => Box::new(toggl::create_handler(setup, &config.sides).await),
-        "hackaru" => Box::new(hackaru::create_handler(setup, &config.sides).await),
-        "clockify" => Box::new(clockify::create_handler(setup, &config.sides).await),
-        "traggo" => Box::new(traggo::create_handler(setup).await),
-+       "example" => Box::new(example::create_handler(setup, &config.sides).await),
-        _ => Box::new(example::create_handler(setup, &config.sides).await),
+        "toggl" => Ok(Box::new(toggl::create_handler(setup, &config.sides).await?)),
+        "hackaru" => Ok(Box::new(hackaru::create_handler(setup, &config.sides).await?)),
+        "clockify" => Ok(Box::new(clockify::create_handler(setup, &config.sides).await?)),
+        "traggo" => Ok(Box::new(traggo::create_handler(setup).await)),
+        "timetagger" => Ok(Box::new(timetagger::create_handler(setup).await?)),
++       "example" => Ok(Box::new(example::create_handler(setup, &config.sides).await?)),
+        handler => anyhow::bail!("unknown time-tracking handler: {handler}"),
     }
 }
 ```

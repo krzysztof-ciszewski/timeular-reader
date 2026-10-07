@@ -1,6 +1,7 @@
+use anyhow::{bail, Context as _, Result};
 use async_trait::async_trait;
 use chrono::{DateTime, Local, Utc};
-use log::{debug, error};
+use log::debug;
 use rand::{distributions::Alphanumeric, Rng};
 use reqwest::Client;
 use rpassword::prompt_password;
@@ -47,7 +48,11 @@ struct Record {
 
 #[async_trait]
 impl Handler for Timetagger {
-    async fn handle(&self, side: &Side, duration: &(DateTime<Local>, DateTime<Local>)) {
+    async fn handle(
+        &self,
+        side: &Side,
+        duration: &(DateTime<Local>, DateTime<Local>),
+    ) -> Result<()> {
         let key = generate_record_key();
         let record = Record {
             key: key.clone(),
@@ -69,43 +74,27 @@ impl Handler for Timetagger {
             .header("authtoken", &self.config.api_key)
             .json(&[record])
             .send()
-            .await;
+            .await
+            .context("failed to send time entry to TimeTagger")?
+            .error_for_status()
+            .context("TimeTagger rejected the time entry")?;
 
-        let response = match response {
-            Ok(response) => response,
-            Err(err) => {
-                error!("Timetagger request failed: {err}");
-                return;
-            }
-        };
-
-        let status = response.status();
-        if !status.is_success() {
-            match response.text().await {
-                Ok(body) => error!("Timetagger returned HTTP {status}: {body}"),
-                Err(err) => {
-                    error!("Timetagger returned HTTP {status}; failed to read response: {err}")
-                }
-            }
-            return;
+        let result = response
+            .json::<RecordsResponse>()
+            .await
+            .context("failed to parse TimeTagger response")?;
+        if !result.accepted.iter().any(|accepted| accepted == &key)
+            || !result.failed.is_empty()
+            || !result.errors.is_empty()
+        {
+            bail!(
+                "TimeTagger did not accept record {key}; failed: {:?}; errors: {:?}",
+                result.failed,
+                result.errors
+            );
         }
-
-        match response.json::<RecordsResponse>().await {
-            Ok(result)
-                if result.accepted.iter().any(|accepted| accepted == &key)
-                    && result.failed.is_empty()
-                    && result.errors.is_empty() =>
-            {
-                debug!("Timetagger accepted record {key}");
-            }
-            Ok(result) => {
-                error!(
-                    "Timetagger did not accept record {key}; failed: {:?}; errors: {:?}",
-                    result.failed, result.errors,
-                );
-            }
-            Err(err) => error!("Failed to parse Timetagger response: {err}"),
-        }
+        debug!("TimeTagger accepted record {key}");
+        Ok(())
     }
 }
 
@@ -117,17 +106,19 @@ fn generate_record_key() -> String {
         .collect()
 }
 
-pub async fn create_handler(setup: bool) -> Timetagger {
-    let mut config = create_config();
-    update_vendor_config(&mut config, setup);
+pub async fn create_handler(setup: bool) -> Result<Timetagger> {
+    let mut config = create_config()?;
+    update_vendor_config(&mut config, setup)?;
 
-    Timetagger {
-        client: Client::new(),
+    Ok(Timetagger {
+        client: Client::builder()
+            .build()
+            .context("failed to create TimeTagger HTTP client")?,
         config,
-    }
+    })
 }
 
-fn update_vendor_config(config: &mut TimetaggerConfig, setup: bool) {
+fn update_vendor_config(config: &mut TimetaggerConfig, setup: bool) -> Result<()> {
     if setup || config.api_key.is_empty() {
         let message = if config.api_key.is_empty() {
             "Provide your TimeTagger API token".to_string()
@@ -135,13 +126,13 @@ fn update_vendor_config(config: &mut TimetaggerConfig, setup: bool) {
             "Provide your TimeTagger API token (leave blank to keep the current value)".to_string()
         };
         let api_key = prompt_password(message)
-            .expect("Failed to read TimeTagger API token")
+            .context("failed to read TimeTagger API token")?
             .trim()
             .to_string();
 
         if !api_key.is_empty() {
             config.api_key = api_key;
-            update_config(config);
+            update_config(config)?;
         }
     }
 
@@ -159,14 +150,15 @@ fn update_vendor_config(config: &mut TimetaggerConfig, setup: bool) {
         let mut timetagger_url = String::new();
         io::stdin()
             .read_line(&mut timetagger_url)
-            .expect("Failed to read TimeTagger records API URL");
+            .context("failed to read TimeTagger records API URL")?;
         let timetagger_url = timetagger_url.trim();
 
         if !timetagger_url.is_empty() {
             config.timetagger_url = timetagger_url.to_string();
-            update_config(config);
+            update_config(config)?;
         }
     }
+    Ok(())
 }
 
 #[cfg(test)]

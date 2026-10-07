@@ -1,12 +1,13 @@
-use std::{error::Error, pin::Pin, sync::Arc};
+use std::{pin::Pin, sync::Arc};
 
 use crate::handler::{get_handler, Handlers};
+use anyhow::{Context as _, Result};
 use btleplug::api::Peripheral;
 use btleplug::api::{Central, ValueNotification};
 use btleplug::platform::{Adapter, PeripheralId};
 use chrono::{Local, TimeDelta};
 use futures::{Stream, StreamExt};
-use log::debug;
+use log::{debug, warn};
 use simplelog::info;
 use strum::IntoEnumIterator;
 
@@ -14,18 +15,17 @@ use crate::tracker::config::{Handler, Side};
 
 use super::config;
 
-pub async fn read_tracker(
-    id: PeripheralId,
-    adapter: Arc<Adapter>,
-    setup: bool,
-) -> Result<(), Box<dyn Error>> {
-    let tracker = adapter.peripheral(&id).await.unwrap();
+pub async fn read_tracker(id: PeripheralId, adapter: Arc<Adapter>, setup: bool) -> Result<()> {
+    let tracker = adapter
+        .peripheral(&id)
+        .await
+        .context("failed to access discovered tracker")?;
 
     tracker.connect().await?;
     info!("Connected");
 
     if setup {
-        setup_tracker_config(&tracker).await;
+        setup_tracker_config(&tracker).await?;
     }
 
     read_orientation(&tracker, setup).await?;
@@ -33,39 +33,44 @@ pub async fn read_tracker(
     Ok(())
 }
 
-async fn setup_tracker_config(tracker: &impl Peripheral) {
+async fn setup_tracker_config(tracker: &impl Peripheral) -> Result<()> {
     info!("Entering setup mode");
 
-    let mut config = config::get_timeular_config();
+    let mut config = config::get_timeular_config()?;
 
     if !config.handler.is_empty() {
         info!("Currently used handler: {}", config.handler);
     }
 
-    let handler = get_handler_enum();
-    if handler.is_some() {
-        config.handler = format!("{:?}", handler.unwrap()).to_string().to_lowercase();
+    if let Some(handler) = get_handler_enum()? {
+        config.handler = format!("{handler:?}").to_lowercase();
     }
 
     info!("Flip the device to a side you want to set up");
-    let mut notification_stream = get_notification_stream(tracker).await;
+    let mut notification_stream = get_notification_stream(tracker).await?;
 
     while let Some(data) = notification_stream.next().await {
-        let side = data.value[0];
+        let Some(side) = data.value.first().copied() else {
+            warn!("Ignoring empty tracker orientation notification");
+            continue;
+        };
 
         let mut label = String::new();
 
-        if !config.get_side(&side).configurable {
+        let Some(side_config) = config.sides.iter().find(|entry| entry.side_num == side) else {
+            warn!("Ignoring unknown tracker side {side}");
+            continue;
+        };
+
+        if !side_config.configurable {
             continue;
         }
 
-        info!(
-            "Side {}, current label: {}",
-            &side,
-            config.get_side(&side).label
-        );
+        info!("Side {}, current label: {}", &side, side_config.label);
         info!("Please label side {}, q to finish setup", side);
-        std::io::stdin().read_line(&mut label).unwrap();
+        std::io::stdin()
+            .read_line(&mut label)
+            .context("failed to read tracker side label")?;
         label = label.trim().to_string();
 
         if label.eq("q") {
@@ -76,11 +81,12 @@ async fn setup_tracker_config(tracker: &impl Peripheral) {
         info!("Label saved, flip to new side to continue");
     }
 
-    config::update_timeular_config(&config);
+    config::update_timeular_config(&config)?;
+    Ok(())
 }
 
-fn get_handler_enum() -> Option<Handlers> {
-    let mut message = String::from_utf8("Available handlers:".as_bytes().to_vec()).unwrap();
+fn get_handler_enum() -> Result<Option<Handlers>> {
+    let mut message = String::from("Available handlers:");
 
     let mut i: u8 = 1;
     for h in Handlers::iter() {
@@ -90,47 +96,70 @@ fn get_handler_enum() -> Option<Handlers> {
     info!("{message}\nChoose handler [1-{i}]:");
 
     let mut handler = String::new();
-    std::io::stdin().read_line(&mut handler).unwrap();
+    std::io::stdin()
+        .read_line(&mut handler)
+        .context("failed to read handler selection")?;
     handler = handler.trim().to_string();
     if handler.is_empty() {
-        return None;
+        return Ok(None);
     }
 
-    let idx = handler.parse::<u8>().unwrap();
+    let idx = handler
+        .parse::<u8>()
+        .with_context(|| format!("invalid handler selection: {handler}"))?;
 
-    Some(Handlers::try_from(idx).unwrap())
+    Handlers::try_from(idx)
+        .map(Some)
+        .map_err(|_| anyhow::anyhow!("handler selection is out of range: {idx}"))
 }
 
 async fn get_notification_stream(
     tracker: &impl Peripheral,
-) -> Pin<Box<dyn Stream<Item = ValueNotification> + Send>> {
-    tracker.discover_services().await.unwrap();
+) -> Result<Pin<Box<dyn Stream<Item = ValueNotification> + Send>>> {
+    tracker
+        .discover_services()
+        .await
+        .context("failed to discover tracker services")?;
 
     let chars = tracker.characteristics();
     let orientation_char = chars
         .iter()
         .find(|c| c.uuid.to_string().as_str() == config::ORIENTATION_CHARACTERISTIC_UUID)
-        .unwrap();
+        .context("tracker does not expose the orientation characteristic")?;
 
-    tracker.subscribe(orientation_char).await.unwrap();
+    tracker
+        .subscribe(orientation_char)
+        .await
+        .context("failed to subscribe to tracker orientation updates")?;
 
-    tracker.notifications().await.unwrap()
+    tracker
+        .notifications()
+        .await
+        .context("failed to receive tracker notifications")
 }
 
-async fn read_orientation(tracker: &impl Peripheral, setup: bool) -> Result<(), Box<dyn Error>> {
-    let mut notification_stream = get_notification_stream(tracker).await;
+async fn read_orientation(tracker: &impl Peripheral, setup: bool) -> Result<()> {
+    let mut notification_stream = get_notification_stream(tracker).await?;
 
-    let config = config::get_timeular_config();
+    let config = config::get_timeular_config()?;
 
     debug!("Handler is: {}", config.handler);
-    let h: Box<dyn Handler> = get_handler(setup, &config).await;
+    let h: Box<dyn Handler> = get_handler(setup, &config).await?;
 
     let mut prev_side: Option<&Side> = None;
     let mut start_date = Local::now();
 
     info!("Flip the device to the side you want to track");
     while let Some(data) = notification_stream.next().await {
-        let side = config.get_side(&data.value[0]);
+        let Some(side_num) = data.value.first() else {
+            warn!("Ignoring empty tracker orientation notification");
+            continue;
+        };
+        let side = config
+            .sides
+            .iter()
+            .find(|entry| entry.side_num == *side_num)
+            .with_context(|| format!("tracker reported unconfigured side {side_num}"))?;
 
         if !side.label.is_empty() {
             info!("Currently tracking {}", side.label);
@@ -138,13 +167,15 @@ async fn read_orientation(tracker: &impl Peripheral, setup: bool) -> Result<(), 
 
         debug!("current side: {}, previous side: {:?}", side, prev_side);
 
-        if prev_side.is_some() && prev_side.unwrap() != side {
+        if let Some(previous_side) = prev_side.filter(|previous_side| *previous_side != side) {
             let end_date = Local::now();
             let duration = end_date - start_date;
 
-            log_time_spent(duration, &prev_side.unwrap().label);
+            log_time_spent(duration, &previous_side.label);
 
-            h.handle(prev_side.unwrap(), &(start_date, end_date)).await;
+            h.handle(previous_side, &(start_date, end_date))
+                .await
+                .with_context(|| format!("failed to record time for {}", previous_side.label))?;
         }
 
         if !config.is_trackable(&side.side_num) {

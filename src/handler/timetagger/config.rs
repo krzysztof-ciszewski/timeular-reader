@@ -1,4 +1,5 @@
 use crate::config::Config;
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 const CONFIG_KEY: &str = "timetagger";
@@ -12,10 +13,10 @@ pub struct TimetaggerConfig {
 
 impl<'de> Config<'de> for TimetaggerConfig {}
 
-pub fn create_config() -> TimetaggerConfig {
+pub fn create_config() -> Result<TimetaggerConfig> {
     crate::config::get_config::<TimetaggerConfig>(CONFIG_KEY)
 }
 
-pub fn update_config(config: &TimetaggerConfig) {
-    crate::config::update_config(CONFIG_KEY, config);
+pub fn update_config(config: &TimetaggerConfig) -> Result<()> {
+    crate::config::update_config(CONFIG_KEY, config)
 }

@@ -1,5 +1,6 @@
 use crate::config::Config;
 use crate::tracker::side_project::{project_for_side, SideProject};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -33,10 +34,10 @@ impl ExampleConfig {
 
 const CONFIG_KEY: &str = "example";
 
-pub fn create_config() -> ExampleConfig {
+pub fn create_config() -> Result<ExampleConfig> {
     crate::config::get_config::<ExampleConfig>(CONFIG_KEY)
 }
 
-pub fn update_config(config: &ExampleConfig) {
-    crate::config::update_config(CONFIG_KEY, config);
+pub fn update_config(config: &ExampleConfig) -> Result<()> {
+    crate::config::update_config(CONFIG_KEY, config)
 }

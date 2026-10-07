@@ -1,3 +1,4 @@
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 use crate::config::Config;
@@ -36,10 +37,10 @@ impl Default for ClockifyConfig {
 }
 impl<'de> Config<'de> for ClockifyConfig {}
 
-pub fn create_config() -> ClockifyConfig {
+pub fn create_config() -> Result<ClockifyConfig> {
     crate::config::get_config::<ClockifyConfig>(CONFIG_KEY)
 }
 
-pub fn update_config(config: &ClockifyConfig) {
-    crate::config::update_config(CONFIG_KEY, config);
+pub fn update_config(config: &ClockifyConfig) -> Result<()> {
+    crate::config::update_config(CONFIG_KEY, config)
 }

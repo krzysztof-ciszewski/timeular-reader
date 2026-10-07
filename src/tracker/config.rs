@@ -1,3 +1,4 @@
+use anyhow::Result;
 use async_trait::async_trait;
 use chrono::{DateTime, Local};
 use log::debug;
@@ -30,8 +31,13 @@ impl fmt::Display for Side {
 
 #[async_trait]
 pub trait Handler: Sync + Send {
-    async fn handle(&self, side: &Side, duration: &(DateTime<Local>, DateTime<Local>)) {
-        debug!("handler\n side: {:?}\n duration {:?}", side, duration)
+    async fn handle(
+        &self,
+        side: &Side,
+        duration: &(DateTime<Local>, DateTime<Local>),
+    ) -> Result<()> {
+        debug!("handler\n side: {:?}\n duration {:?}", side, duration);
+        Ok(())
     }
 }
 pub struct CallbackHandler {
@@ -40,8 +46,13 @@ pub struct CallbackHandler {
 
 #[async_trait]
 impl Handler for CallbackHandler {
-    async fn handle(&self, side: &Side, duration: &(DateTime<Local>, DateTime<Local>)) {
+    async fn handle(
+        &self,
+        side: &Side,
+        duration: &(DateTime<Local>, DateTime<Local>),
+    ) -> Result<()> {
         (self.callback)(side, duration);
+        Ok(())
     }
 }
 
@@ -128,12 +139,9 @@ impl Default for TimeularConfig {
 impl<'de> Config<'de> for TimeularConfig {}
 
 impl TimeularConfig {
-    pub(crate) fn get_side(&self, side_num: &u8) -> &Side {
-        self.find_side(side_num).unwrap()
-    }
-
     pub fn is_trackable(&self, side_num: &u8) -> bool {
-        self.find_side(side_num).is_some() && !self.find_side(side_num).unwrap().label.is_empty()
+        self.find_side(side_num)
+            .is_some_and(|side| !side.label.is_empty())
     }
 
     fn find_side(&self, side_num: &u8) -> Option<&Side> {
@@ -157,10 +165,10 @@ impl TimeularConfig {
     }
 }
 
-pub fn get_timeular_config() -> TimeularConfig {
+pub fn get_timeular_config() -> Result<TimeularConfig> {
     crate::config::get_config::<TimeularConfig>(CONFIG_KEY)
 }
 
-pub fn update_timeular_config(config: &TimeularConfig) {
-    crate::config::update_config(CONFIG_KEY, config);
+pub fn update_timeular_config(config: &TimeularConfig) -> Result<()> {
+    crate::config::update_config(CONFIG_KEY, config)
 }

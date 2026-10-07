@@ -2,6 +2,7 @@ use std::fmt::Display;
 use std::io::BufRead;
 use std::str::FromStr;
 
+use anyhow::{Context as _, Result};
 use serde::{Deserialize, Serialize};
 use simplelog::info;
 
@@ -62,7 +63,7 @@ pub fn prompt_side_projects<T: FromStr + Display + PartialEq>(
     service: &str,
     sides: &[Side],
     side_projects: &mut Vec<SideProject<T>>,
-) -> bool {
+) -> Result<bool> {
     prompt_side_projects_from(&mut std::io::stdin().lock(), service, sides, side_projects)
 }
 
@@ -71,7 +72,7 @@ fn prompt_side_projects_from<R: BufRead, T: FromStr + Display + PartialEq>(
     service: &str,
     sides: &[Side],
     side_projects: &mut Vec<SideProject<T>>,
-) -> bool {
+) -> Result<bool> {
     let mut changed = false;
 
     for side in sides.iter().filter(|s| !s.label.is_empty()) {
@@ -92,8 +93,14 @@ fn prompt_side_projects_from<R: BufRead, T: FromStr + Display + PartialEq>(
             info!("{message}");
 
             let mut input = String::new();
-            if reader.read_line(&mut input).unwrap_or(0) == 0 {
-                return changed;
+            if reader.read_line(&mut input).with_context(|| {
+                format!(
+                    "failed to read {service} project ID for side {}",
+                    side.side_num
+                )
+            })? == 0
+            {
+                return Ok(changed);
             }
             let input = input.trim();
 
@@ -116,7 +123,7 @@ fn prompt_side_projects_from<R: BufRead, T: FromStr + Display + PartialEq>(
         }
     }
 
-    changed
+    Ok(changed)
 }
 
 #[cfg(test)]
@@ -171,7 +178,7 @@ mod tests {
         // side 1: invalid then 10, side 3: blank keeps 30, side 4: reset
         let mut input = "abc\n10\n\n-\n".as_bytes();
 
-        let changed = prompt_side_projects_from(&mut input, "Test", &sides, &mut projects);
+        let changed = prompt_side_projects_from(&mut input, "Test", &sides, &mut projects).unwrap();
 
         assert!(changed);
         assert_eq!(
@@ -216,5 +223,42 @@ mod tests {
         let parsed: toml::value::Table = toml::from_str(&text).unwrap();
         let round: Cfg = parsed["svc"].clone().try_into().unwrap();
         assert_eq!(round, cfg);
+    }
+
+    #[test]
+    fn prompt_reports_read_failures() {
+        struct FailingReader;
+
+        impl std::io::Read for FailingReader {
+            fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    "input failed",
+                ))
+            }
+        }
+
+        impl BufRead for FailingReader {
+            fn fill_buf(&mut self) -> std::io::Result<&[u8]> {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    "input failed",
+                ))
+            }
+
+            fn consume(&mut self, _: usize) {}
+        }
+
+        let mut projects: Vec<SideProject<u64>> = Vec::new();
+        let error = prompt_side_projects_from(
+            &mut FailingReader,
+            "Test",
+            &[side(1, "work")],
+            &mut projects,
+        )
+        .unwrap_err();
+
+        assert!(format!("{error:#}").contains("failed to read Test project ID for side 1"));
+        assert!(projects.is_empty());
     }
 }

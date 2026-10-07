@@ -1,3 +1,4 @@
+use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use chrono::{DateTime, Local, SecondsFormat};
 use log::debug;
@@ -25,20 +26,25 @@ pub struct Clockify {
 }
 
 impl Clockify {
-    fn get_time_entries_uri(&self) -> String {
+    fn get_time_entries_uri(&self) -> Result<String> {
         let mut tt = TinyTemplate::new();
         tt.add_template("url", self.config.time_entries_uri.trim_matches('/'))
-            .unwrap();
+            .context("invalid Clockify time-entry URL template")?;
         let mut context = HashMap::new();
         context.insert("workspace_id", &self.config.workspace_id);
 
-        tt.render("url", &context).unwrap()
+        tt.render("url", &context)
+            .context("failed to render Clockify time-entry URL")
     }
 }
 
 #[async_trait]
 impl Handler for Clockify {
-    async fn handle(&self, side: &Side, duration: &(DateTime<Local>, DateTime<Local>)) {
+    async fn handle(
+        &self,
+        side: &Side,
+        duration: &(DateTime<Local>, DateTime<Local>),
+    ) -> Result<()> {
         let body = format!(
             r#"{{
             "projectId": "{project_id}",
@@ -52,7 +58,7 @@ impl Handler for Clockify {
             label = side.label
         );
 
-        let time_entries_url = self.get_time_entries_uri();
+        let time_entries_url = self.get_time_entries_uri()?;
 
         let request_builder = self
             .client
@@ -65,25 +71,37 @@ impl Handler for Clockify {
             .header("x-api-key", &self.config.api_key)
             .body(body);
 
-        let res = request_builder.send().await.unwrap();
+        let res = request_builder
+            .send()
+            .await
+            .context("failed to send time entry to Clockify")?
+            .error_for_status()
+            .context("Clockify rejected the time entry")?;
 
-        debug!("Response: {}", res.text().await.unwrap());
+        debug!(
+            "Clockify response: {}",
+            res.text()
+                .await
+                .context("failed to read Clockify response body")?
+        );
+        Ok(())
     }
 }
 
-pub async fn create_handler(setup: bool, sides: &[Side]) -> Clockify {
-    let mut config = create_config();
-    let client = Client::builder().build().unwrap();
-    update_vendor_config(&mut config, setup, sides);
+pub async fn create_handler(setup: bool, sides: &[Side]) -> Result<Clockify> {
+    let mut config = create_config()?;
+    let client = Client::builder()
+        .build()
+        .context("failed to create Clockify HTTP client")?;
+    update_vendor_config(&mut config, setup, sides)?;
 
-    Clockify { client, config }
+    Ok(Clockify { client, config })
 }
 
-fn update_vendor_config(config: &mut ClockifyConfig, setup: bool, sides: &[Side]) {
+fn update_vendor_config(config: &mut ClockifyConfig, setup: bool, sides: &[Side]) -> Result<()> {
     if setup || config.workspace_id.is_empty() {
         let mut workspace_id = String::new();
-        let mut message =
-            String::from_utf8("Provide your Clockify workspace id".as_bytes().to_vec()).unwrap();
+        let mut message = String::from("Provide your Clockify workspace id");
         if !config.workspace_id.is_empty() {
             message.push_str(
                 format!(
@@ -97,19 +115,18 @@ fn update_vendor_config(config: &mut ClockifyConfig, setup: bool, sides: &[Side]
 
         std::io::stdin()
             .read_line(&mut workspace_id)
-            .expect("Please provide workspace_id");
+            .context("failed to read Clockify workspace ID")?;
         workspace_id = workspace_id.trim().to_string();
 
         if !workspace_id.is_empty() {
             config.workspace_id = workspace_id;
-            update_config(config);
+            update_config(config)?;
         }
     }
 
     if setup || config.project_id.is_empty() {
         let mut project_id = String::new();
-        let mut message =
-            String::from_utf8("Provide your Clockify project id".as_bytes().to_vec()).unwrap();
+        let mut message = String::from("Provide your Clockify project id");
         if !config.project_id.is_empty() {
             message.push_str(
                 format!("\nCurrently \"{}\", leave blank to skip", config.project_id).as_str(),
@@ -119,31 +136,34 @@ fn update_vendor_config(config: &mut ClockifyConfig, setup: bool, sides: &[Side]
 
         std::io::stdin()
             .read_line(&mut project_id)
-            .expect("Please provide project_id");
+            .context("failed to read Clockify project ID")?;
 
         project_id = project_id.trim().to_string();
 
         if !project_id.is_empty() {
             config.project_id = project_id;
-            update_config(config);
+            update_config(config)?;
         }
     }
 
-    if setup && prompt_side_projects("Clockify", sides, &mut config.side_projects) {
-        update_config(config);
+    if setup && prompt_side_projects("Clockify", sides, &mut config.side_projects)? {
+        update_config(config)?;
     }
 
     if setup || config.api_key.is_empty() {
-        let mut message =
-            String::from_utf8("Provide your Clockify Api Key".as_bytes().to_vec()).unwrap();
+        let mut message = String::from("Provide your Clockify API key");
         if !config.api_key.is_empty() {
             message.push_str("\nleave blank to use current value");
         }
-        let api_key: String = (*prompt_password(message).unwrap().trim()).to_string();
+        let api_key = prompt_password(message)
+            .context("failed to read Clockify API key")?
+            .trim()
+            .to_string();
 
         if !api_key.is_empty() {
             config.api_key = api_key;
-            update_config(config);
+            update_config(config)?;
         }
     }
+    Ok(())
 }
