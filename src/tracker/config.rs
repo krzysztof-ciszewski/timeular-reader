@@ -16,11 +16,24 @@ pub struct TimeularConfig {
     pub handler: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Side {
     pub side_num: u8,
     pub label: String,
     pub configurable: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TimeEntry {
+    pub side: Side,
+    pub start: DateTime<Local>,
+    pub end: DateTime<Local>,
+}
+
+impl Side {
+    pub fn is_trackable(&self) -> bool {
+        !self.label.is_empty()
+    }
 }
 
 impl fmt::Display for Side {
@@ -31,27 +44,19 @@ impl fmt::Display for Side {
 
 #[async_trait]
 pub trait Handler: Sync + Send {
-    async fn handle(
-        &self,
-        side: &Side,
-        duration: &(DateTime<Local>, DateTime<Local>),
-    ) -> Result<()> {
-        debug!("handler\n side: {:?}\n duration {:?}", side, duration);
+    async fn handle(&self, entry: &TimeEntry) -> Result<()> {
+        debug!("handler\n entry: {:?}", entry);
         Ok(())
     }
 }
 pub struct CallbackHandler {
-    callback: fn(side: &Side, duration: &(DateTime<Local>, DateTime<Local>)),
+    callback: fn(entry: &TimeEntry),
 }
 
 #[async_trait]
 impl Handler for CallbackHandler {
-    async fn handle(
-        &self,
-        side: &Side,
-        duration: &(DateTime<Local>, DateTime<Local>),
-    ) -> Result<()> {
-        (self.callback)(side, duration);
+    async fn handle(&self, entry: &TimeEntry) -> Result<()> {
+        (self.callback)(entry);
         Ok(())
     }
 }
@@ -139,15 +144,6 @@ impl Default for TimeularConfig {
 impl<'de> Config<'de> for TimeularConfig {}
 
 impl TimeularConfig {
-    pub fn is_trackable(&self, side_num: &u8) -> bool {
-        self.find_side(side_num)
-            .is_some_and(|side| !side.label.is_empty())
-    }
-
-    fn find_side(&self, side_num: &u8) -> Option<&Side> {
-        self.sides.iter().find(|e| e.side_num.eq(side_num))
-    }
-
     fn find_side_mut(&mut self, side_num: &u8) -> Option<&mut Side> {
         self.sides.iter_mut().find(|e| e.side_num.eq(side_num))
     }

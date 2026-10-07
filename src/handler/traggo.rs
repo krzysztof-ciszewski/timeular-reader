@@ -1,7 +1,6 @@
-use crate::tracker::config::{Handler, Side};
+use crate::tracker::config::{Handler, TimeEntry};
 use anyhow::{bail, Result};
 use async_trait::async_trait;
-use chrono::{DateTime, Local};
 
 pub struct TraggoConfig {}
 #[derive(Debug, Default)]
@@ -9,11 +8,7 @@ pub struct Traggo {}
 
 #[async_trait]
 impl Handler for Traggo {
-    async fn handle(
-        &self,
-        _side: &Side,
-        _duration: &(DateTime<Local>, DateTime<Local>),
-    ) -> Result<()> {
+    async fn handle(&self, _entry: &TimeEntry) -> Result<()> {
         bail!("Traggo integration is not implemented")
     }
 }
