@@ -15,6 +15,8 @@ use crate::tracker::reader;
 
 pub mod config;
 pub mod handler;
+#[cfg(test)]
+mod test_support;
 pub mod tracker;
 
 #[derive(Parser, Debug)]

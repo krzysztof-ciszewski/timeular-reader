@@ -2,9 +2,9 @@ use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use chrono::SecondsFormat;
 use log::debug;
-use reqwest::header::CONTENT_TYPE;
 use reqwest::Client;
 use rpassword::prompt_password;
+use serde::Serialize;
 use simplelog::info;
 use tinytemplate::TinyTemplate;
 
@@ -18,6 +18,16 @@ use crate::{
 use self::config::{create_config, TogglConfig};
 
 pub mod config;
+
+#[derive(Serialize)]
+struct TimeEntryRequest<'a> {
+    created_with: &'static str,
+    project_id: u64,
+    start: String,
+    stop: String,
+    workspace_id: u64,
+    description: &'a str,
+}
 
 #[derive(Debug, Default)]
 pub struct Toggl {
@@ -40,21 +50,14 @@ impl Toggl {
 #[async_trait]
 impl Handler for Toggl {
     async fn handle(&self, entry: &TimeEntry) -> Result<()> {
-        let body = format!(
-            r#"{{
-            "created_with": "timeular_reader",
-            "project_id": {project_id},
-            "start": "{start}",
-            "stop": "{stop}",
-            "workspace_id": {workspace_id},
-            "description": "{label}"
-        }}"#,
-            project_id = self.config.project_id_for_side(entry.side.side_num),
-            start = entry.start.to_rfc3339_opts(SecondsFormat::Secs, true),
-            stop = entry.end.to_rfc3339_opts(SecondsFormat::Secs, true),
-            workspace_id = self.config.workspace_id,
-            label = entry.side.label
-        );
+        let body = TimeEntryRequest {
+            created_with: "timeular_reader",
+            project_id: self.config.project_id_for_side(entry.side.side_num),
+            start: entry.start.to_rfc3339_opts(SecondsFormat::Secs, true),
+            stop: entry.end.to_rfc3339_opts(SecondsFormat::Secs, true),
+            workspace_id: self.config.workspace_id,
+            description: &entry.side.label,
+        };
 
         let time_entries_url = self.get_time_entries_uri()?;
 
@@ -66,8 +69,7 @@ impl Handler for Toggl {
                 time_entries_url,
             ))
             .basic_auth(&self.config.email, Some(&self.config.password))
-            .header(CONTENT_TYPE, "application/json")
-            .body(body);
+            .json(&body);
 
         debug!(
             "Sending time entry to Toggl workspace {}",
@@ -195,4 +197,74 @@ fn update_vendor_config(config: &mut TogglConfig, setup: bool, sides: &[Side]) -
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{config::TogglConfig, Toggl};
+    use crate::{
+        test_support::{request_body, time_entry, MockServer},
+        tracker::config::Handler,
+    };
+    use reqwest::Client;
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn posts_a_valid_json_entry_with_side_project_and_basic_auth() {
+        let server = MockServer::start(1, |_, _| (200, "{}".into()));
+        let config = TogglConfig {
+            base_url: server.url().to_string(),
+            time_entries_uri: "/workspaces/{workspace_id}/time_entries".into(),
+            workspace_id: 123,
+            project_id: 1,
+            email: "user".into(),
+            password: "pass".into(),
+            side_projects: vec![crate::tracker::side_project::SideProject {
+                side_num: 2,
+                project_id: 99,
+            }],
+        };
+
+        let entry = time_entry(2, "Quote: \" slash: \\ newline:\n");
+        let handler = Toggl {
+            client: Client::new(),
+            config,
+        };
+        handler.handle(&entry).await.unwrap();
+
+        let requests = server.finish();
+        let request = &requests[0];
+        assert!(request.starts_with("POST /workspaces/123/time_entries HTTP/1.1"));
+        assert!(request.contains("authorization: Basic dXNlcjpwYXNz"));
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(request_body(request)).unwrap(),
+            json!({
+                "created_with": "timeular_reader",
+                "project_id": 99,
+                "start": entry.start.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+                "stop": entry.end.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+                "workspace_id": 123,
+                "description": entry.side.label
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn reports_http_rejection() {
+        let server = MockServer::start(1, |_, _| (500, "{}".into()));
+        let config = TogglConfig {
+            base_url: server.url().to_string(),
+            workspace_id: 1,
+            ..TogglConfig::default()
+        };
+
+        let handler = Toggl {
+            client: Client::new(),
+            config,
+        };
+        let error = handler.handle(&time_entry(1, "Work")).await.unwrap_err();
+
+        assert!(format!("{error:#}").contains("Toggl rejected the time entry"));
+        server.finish();
+    }
 }

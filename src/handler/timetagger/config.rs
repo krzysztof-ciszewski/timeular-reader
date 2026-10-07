@@ -20,3 +20,15 @@ pub fn create_config() -> Result<TimetaggerConfig> {
 pub fn update_config(config: &TimetaggerConfig) -> Result<()> {
     crate::config::update_config(CONFIG_KEY, config)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::TimetaggerConfig;
+
+    #[test]
+    fn default_config_leaves_credentials_unset() {
+        let config = TimetaggerConfig::default();
+        assert!(config.api_key.is_empty());
+        assert!(config.timetagger_url.is_empty());
+    }
+}

@@ -50,3 +50,42 @@ pub fn create_config() -> Result<TogglConfig> {
 pub fn update_config(config: &TogglConfig) -> Result<()> {
     crate::config::update_config(CONFIG_KEY, config)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::TogglConfig;
+    use crate::tracker::side_project::SideProject;
+
+    #[test]
+    fn defaults_and_side_projects_preserve_toggl_ids() {
+        let mut config = TogglConfig::default();
+        assert_eq!(config.base_url, "https://api.track.toggl.com");
+        assert_eq!(config.project_id_for_side(1), 0);
+
+        config.project_id = 5;
+        config.side_projects.push(SideProject {
+            side_num: 2,
+            project_id: 10,
+        });
+        assert_eq!(config.project_id_for_side(1), 5);
+        assert_eq!(config.project_id_for_side(2), 10);
+    }
+
+    #[test]
+    fn legacy_config_defaults_missing_side_projects() {
+        let config: TogglConfig = toml::from_str(
+            r#"
+base_url = "https://example.test"
+time_entries_uri = "entries"
+email = ""
+password = ""
+project_id = 5
+workspace_id = 7
+"#,
+        )
+        .unwrap();
+
+        assert!(config.side_projects.is_empty());
+        assert_eq!(config.project_id_for_side(1), 5);
+    }
+}
