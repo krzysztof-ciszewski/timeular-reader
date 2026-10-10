@@ -10,6 +10,7 @@ use clap::Parser;
 use futures::stream::StreamExt;
 use log::{debug, error, warn, LevelFilter};
 use simplelog::{info, ColorChoice, ConfigBuilder, TermLogger, TerminalMode};
+use tokio::{sync::watch, task::JoinHandle};
 
 use crate::tracker::reader;
 
@@ -48,72 +49,109 @@ async fn main() -> Result<()> {
 
     adapter.start_scan(ScanFilter::default()).await?;
 
-    while let Some(event) = events.next().await {
-        match event {
-            CentralEvent::DeviceDiscovered(id) => {
-                let per = match adapter.peripheral(&id).await {
-                    Ok(per) => per,
-                    Err(error) => {
-                        warn!("Failed to inspect discovered Bluetooth device: {error}");
-                        continue;
-                    }
-                };
-                let name = match get_name(&per).await {
-                    Ok(per) => per,
-                    Err(error) => {
-                        warn!("Failed to read discovered Bluetooth device name: {error:#}");
-                        continue;
-                    }
-                };
-                if !name.to_lowercase().contains("timeular") {
-                    continue;
-                }
-                spawn_reader(id, &adapter, setup);
-            }
-            CentralEvent::DeviceDisconnected(id) => {
-                let per = match adapter.peripheral(&id).await {
-                    Ok(per) => per,
-                    Err(error) => {
-                        warn!("Failed to inspect disconnected Bluetooth device: {error}");
-                        continue;
-                    }
-                };
-                let name = match get_name(&per).await {
-                    Ok(name) => name,
-                    Err(error) => {
-                        warn!("Failed to read disconnected Bluetooth device name: {error:#}");
-                        continue;
-                    }
-                };
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    let mut readers: Vec<JoinHandle<()>> = Vec::new();
+    let ctrl_c = tokio::signal::ctrl_c();
+    tokio::pin!(ctrl_c);
+    let mut shutdown_error = None;
 
-                if !name.to_lowercase().contains("timeular") {
-                    continue;
+    loop {
+        tokio::select! {
+            signal_result = &mut ctrl_c => {
+                match signal_result {
+                    Ok(()) => info!("Shutdown requested"),
+                    Err(error) => {
+                        shutdown_error = Some(anyhow::Error::new(error).context("failed to listen for Ctrl+C"));
+                    }
                 }
-
-                info!("Tracker disconnected");
                 break;
             }
-            _ => {}
+            event = events.next() => {
+                let Some(event) = event else {
+                    break;
+                };
+                match event {
+                    CentralEvent::DeviceDiscovered(id) => {
+                        let per = match adapter.peripheral(&id).await {
+                            Ok(per) => per,
+                            Err(error) => {
+                                warn!("Failed to inspect discovered Bluetooth device: {error}");
+                                continue;
+                            }
+                        };
+                        let name = match get_name(&per).await {
+                            Ok(per) => per,
+                            Err(error) => {
+                                warn!("Failed to read discovered Bluetooth device name: {error:#}");
+                                continue;
+                            }
+                        };
+                        if !name.to_lowercase().contains("timeular") {
+                            continue;
+                        }
+                        readers.push(spawn_reader(id, &adapter, setup, shutdown_rx.clone()));
+                    }
+                    CentralEvent::DeviceDisconnected(id) => {
+                        let per = match adapter.peripheral(&id).await {
+                            Ok(per) => per,
+                            Err(error) => {
+                                warn!("Failed to inspect disconnected Bluetooth device: {error}");
+                                continue;
+                            }
+                        };
+                        let name = match get_name(&per).await {
+                            Ok(name) => name,
+                            Err(error) => {
+                                warn!("Failed to read disconnected Bluetooth device name: {error:#}");
+                                continue;
+                            }
+                        };
+
+                        if !name.to_lowercase().contains("timeular") {
+                            continue;
+                        }
+
+                        info!("Tracker disconnected");
+                        break;
+                    }
+                    _ => {}
+                }
+            }
         }
     }
 
-    Ok(())
+    shutdown_tx.send_replace(true);
+    for reader in readers {
+        if let Err(error) = reader.await {
+            error!("Tracker reader task failed: {error}");
+        }
+    }
+
+    match shutdown_error {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
 }
 
 fn should_setup(requested: bool, config_path: &Path) -> std::io::Result<bool> {
     Ok(requested || !config_path.try_exists()?)
 }
 
-fn spawn_reader(id: PeripheralId, adapter: &Arc<Adapter>, setup: bool) {
+fn spawn_reader(
+    id: PeripheralId,
+    adapter: &Arc<Adapter>,
+    setup: bool,
+    shutdown: watch::Receiver<bool>,
+) -> JoinHandle<()> {
     info!("Connecting to tracker...");
 
     let adapter = adapter.clone();
 
     tokio::spawn(async move {
-        if let Err(error) = reader::read_tracker(id, adapter, setup).await {
+        if let Err(error) = reader::read_tracker(id, adapter, setup, shutdown).await {
             error!("Tracker reader stopped: {error:#}");
         }
-    });
+    })
 }
 
 async fn get_adapter() -> Result<Adapter> {
