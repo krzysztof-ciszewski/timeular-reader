@@ -53,31 +53,28 @@ pub async fn create_handler(setup: bool, sides: &[Side]) -> Result<Example> {
     let client = Client::builder()
         .build()
         .context("failed to create Example HTTP client")?;
-    update_vendor_config(&mut config, setup, sides).await?;
+    update_vendor_config(&mut config, setup, sides)?;
 
     Ok(Example { client, config })
 }
 
-async fn update_vendor_config(
-    config: &mut ExampleConfig,
-    setup: bool,
-    sides: &[Side],
-) -> Result<()> {
-    if setup && prompt_side_projects("Example", sides, &mut config.side_projects).await? {
+fn update_vendor_config(config: &mut ExampleConfig, setup: bool, sides: &[Side]) -> Result<()> {
+    if setup && prompt_side_projects("Example", sides, &mut config.side_projects)? {
         update_config(config)?;
     }
 
     if setup || config.api_key.is_empty() {
+        let mut api_key = String::new();
         let mut message = String::from("Provide your Example API key");
         if config.api_key.is_empty() {
             message.push_str("\n leave blank to skip");
         }
         info!("{message}");
 
-        let api_key = crate::prompt::read_line()
-            .await
+        std::io::stdin()
+            .read_line(&mut api_key)
             .context("failed to read Example API key")?;
-        let api_key = api_key.trim().to_string();
+        api_key = api_key.trim().to_string();
 
         if !api_key.is_empty() {
             config.api_key = api_key;

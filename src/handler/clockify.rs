@@ -3,6 +3,7 @@ use async_trait::async_trait;
 use chrono::SecondsFormat;
 use log::debug;
 use reqwest::Client;
+use rpassword::prompt_password;
 use serde::Serialize;
 use simplelog::info;
 use std::collections::HashMap;
@@ -91,17 +92,14 @@ pub async fn create_handler(setup: bool, sides: &[Side]) -> Result<Clockify> {
     let client = Client::builder()
         .build()
         .context("failed to create Clockify HTTP client")?;
-    update_vendor_config(&mut config, setup, sides).await?;
+    update_vendor_config(&mut config, setup, sides)?;
 
     Ok(Clockify { client, config })
 }
 
-async fn update_vendor_config(
-    config: &mut ClockifyConfig,
-    setup: bool,
-    sides: &[Side],
-) -> Result<()> {
+fn update_vendor_config(config: &mut ClockifyConfig, setup: bool, sides: &[Side]) -> Result<()> {
     if setup || config.workspace_id.is_empty() {
+        let mut workspace_id = String::new();
         let mut message = String::from("Provide your Clockify workspace id");
         if !config.workspace_id.is_empty() {
             message.push_str(
@@ -114,10 +112,10 @@ async fn update_vendor_config(
         }
         info!("{message}");
 
-        let workspace_id = crate::prompt::read_line()
-            .await
+        std::io::stdin()
+            .read_line(&mut workspace_id)
             .context("failed to read Clockify workspace ID")?;
-        let workspace_id = workspace_id.trim().to_string();
+        workspace_id = workspace_id.trim().to_string();
 
         if !workspace_id.is_empty() {
             config.workspace_id = workspace_id;
@@ -126,6 +124,7 @@ async fn update_vendor_config(
     }
 
     if setup || config.project_id.is_empty() {
+        let mut project_id = String::new();
         let mut message = String::from("Provide your Clockify project id");
         if !config.project_id.is_empty() {
             message.push_str(
@@ -134,11 +133,11 @@ async fn update_vendor_config(
         }
         log::info!("{message}");
 
-        let project_id = crate::prompt::read_line()
-            .await
+        std::io::stdin()
+            .read_line(&mut project_id)
             .context("failed to read Clockify project ID")?;
 
-        let project_id = project_id.trim().to_string();
+        project_id = project_id.trim().to_string();
 
         if !project_id.is_empty() {
             config.project_id = project_id;
@@ -146,7 +145,7 @@ async fn update_vendor_config(
         }
     }
 
-    if setup && prompt_side_projects("Clockify", sides, &mut config.side_projects).await? {
+    if setup && prompt_side_projects("Clockify", sides, &mut config.side_projects)? {
         update_config(config)?;
     }
 
@@ -155,8 +154,7 @@ async fn update_vendor_config(
         if !config.api_key.is_empty() {
             message.push_str("\nleave blank to use current value");
         }
-        let api_key = crate::prompt::read_password(message)
-            .await
+        let api_key = prompt_password(message)
             .context("failed to read Clockify API key")?
             .trim()
             .to_string();

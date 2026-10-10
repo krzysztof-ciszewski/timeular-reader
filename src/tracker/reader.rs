@@ -1,4 +1,4 @@
-use std::{future::Future, pin::Pin, sync::Arc};
+use std::{pin::Pin, sync::Arc};
 
 use crate::handler::{get_handler, Handlers};
 use anyhow::{Context as _, Result};
@@ -21,25 +21,18 @@ pub async fn read_tracker(
     id: PeripheralId,
     adapter: Arc<Adapter>,
     setup: bool,
-    mut shutdown: watch::Receiver<bool>,
+    shutdown: watch::Receiver<bool>,
 ) -> Result<()> {
-    let Some(result) = run_until_shutdown(&mut shutdown, adapter.peripheral(&id)).await else {
-        return Ok(());
-    };
-    let tracker = result.context("failed to access discovered tracker")?;
+    let tracker = adapter
+        .peripheral(&id)
+        .await
+        .context("failed to access discovered tracker")?;
 
-    let Some(result) = run_until_shutdown(&mut shutdown, tracker.connect()).await else {
-        return Ok(());
-    };
-    result?;
+    tracker.connect().await?;
     info!("Connected");
 
     if setup {
-        let Some(result) = run_until_shutdown(&mut shutdown, setup_tracker_config(&tracker)).await
-        else {
-            return Ok(());
-        };
-        result?;
+        setup_tracker_config(&tracker).await?;
     }
 
     read_orientation(&tracker, setup, shutdown).await?;
@@ -56,7 +49,7 @@ async fn setup_tracker_config(tracker: &impl Peripheral) -> Result<()> {
         info!("Currently used handler: {}", config.handler);
     }
 
-    if let Some(handler) = get_handler_enum().await? {
+    if let Some(handler) = get_handler_enum()? {
         config.handler = format!("{handler:?}").to_lowercase();
     }
 
@@ -69,6 +62,8 @@ async fn setup_tracker_config(tracker: &impl Peripheral) -> Result<()> {
             continue;
         };
 
+        let mut label = String::new();
+
         let Some(side_config) = config.sides.iter().find(|entry| entry.side_num == side) else {
             warn!("Ignoring unknown tracker side {side}");
             continue;
@@ -80,10 +75,10 @@ async fn setup_tracker_config(tracker: &impl Peripheral) -> Result<()> {
 
         info!("Side {}, current label: {}", &side, side_config.label);
         info!("Please label side {}, q to finish setup", side);
-        let label = crate::prompt::read_line()
-            .await
+        std::io::stdin()
+            .read_line(&mut label)
             .context("failed to read tracker side label")?;
-        let label = label.trim().to_string();
+        label = label.trim().to_string();
 
         if label.eq("q") {
             break;
@@ -97,7 +92,7 @@ async fn setup_tracker_config(tracker: &impl Peripheral) -> Result<()> {
     Ok(())
 }
 
-async fn get_handler_enum() -> Result<Option<Handlers>> {
+fn get_handler_enum() -> Result<Option<Handlers>> {
     let mut message = String::from("Available handlers:");
 
     let mut i: u8 = 1;
@@ -107,10 +102,11 @@ async fn get_handler_enum() -> Result<Option<Handlers>> {
     }
     info!("{message}\nChoose handler [1-{i}]:");
 
-    let handler = crate::prompt::read_line()
-        .await
+    let mut handler = String::new();
+    std::io::stdin()
+        .read_line(&mut handler)
         .context("failed to read handler selection")?;
-    let handler = handler.trim().to_string();
+    handler = handler.trim().to_string();
     if handler.is_empty() {
         return Ok(None);
     }
@@ -154,43 +150,16 @@ async fn read_orientation(
     setup: bool,
     mut shutdown: watch::Receiver<bool>,
 ) -> Result<()> {
-    let prepare = async {
-        let notification_stream = get_notification_stream(tracker).await?;
-        let config = config::get_timeular_config()?;
-        debug!("Handler is: {}", config.handler);
-        let handler: Box<dyn Handler> = get_handler(setup, &config).await?;
-        Ok::<_, anyhow::Error>((notification_stream, config, handler))
-    };
-    let Some(prepared) = run_until_shutdown(&mut shutdown, prepare).await else {
-        return Ok(());
-    };
-    let (notification_stream, config, h) = prepared?;
+    let notification_stream = get_notification_stream(tracker).await?;
+
+    let config = config::get_timeular_config()?;
+
+    debug!("Handler is: {}", config.handler);
+    let h: Box<dyn Handler> = get_handler(setup, &config).await?;
 
     info!("Flip the device to the side you want to track");
     let orientations = notification_stream.map(|data| data.value.first().copied());
     process_orientations(orientations, &config.sides, h.as_ref(), &mut shutdown).await
-}
-
-async fn wait_for_shutdown(shutdown: &mut watch::Receiver<bool>) {
-    loop {
-        if *shutdown.borrow() {
-            return;
-        }
-        if shutdown.changed().await.is_err() {
-            return;
-        }
-    }
-}
-
-async fn run_until_shutdown<F, T>(shutdown: &mut watch::Receiver<bool>, operation: F) -> Option<T>
-where
-    F: Future<Output = T>,
-{
-    tokio::select! {
-        biased;
-        _ = wait_for_shutdown(shutdown) => None,
-        result = operation => Some(result),
-    }
 }
 
 async fn process_orientations<S>(
@@ -273,7 +242,7 @@ fn format_time_spent(duration: TimeDelta) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{mpsc, Arc, Mutex};
+    use std::sync::{Arc, Mutex};
 
     use async_trait::async_trait;
     use chrono::TimeDelta;
@@ -282,7 +251,7 @@ mod tests {
 
     use crate::tracker::config::{Handler, Side, TimeEntry};
 
-    use super::{format_time_spent, process_orientations, run_until_shutdown};
+    use super::{format_time_spent, process_orientations};
 
     #[derive(Default)]
     struct RecordingHandler {
@@ -379,39 +348,5 @@ mod tests {
             .unwrap();
 
         assert!(handler.entries.lock().unwrap().is_empty());
-    }
-
-    #[tokio::test]
-    async fn shutdown_cancels_pending_connection_or_setup_work() {
-        let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
-        let task = tokio::spawn(async move {
-            run_until_shutdown(&mut shutdown_rx, std::future::pending::<()>())
-                .await
-                .is_none()
-        });
-
-        shutdown_tx.send_replace(true);
-        assert!(task.await.unwrap());
-    }
-
-    #[tokio::test]
-    async fn shutdown_cancels_waiting_for_blocking_prompt_input() {
-        let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
-        let (started_tx, started_rx) = oneshot::channel();
-        let (release_tx, release_rx) = mpsc::channel();
-        let prompt = crate::prompt::run_on_input_thread(move || {
-            started_tx.send(()).unwrap();
-            release_rx.recv().unwrap();
-            Ok(())
-        });
-        let task =
-            tokio::spawn(
-                async move { run_until_shutdown(&mut shutdown_rx, prompt).await.is_none() },
-            );
-
-        started_rx.await.unwrap();
-        shutdown_tx.send_replace(true);
-        assert!(task.await.unwrap());
-        release_tx.send(()).unwrap();
     }
 }

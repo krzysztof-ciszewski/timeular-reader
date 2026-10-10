@@ -59,26 +59,12 @@ pub fn set_side_project<T: PartialEq>(
 }
 
 /// Asks for a project id for every labeled side. Returns true if anything changed.
-pub async fn prompt_side_projects<T: FromStr + Display + PartialEq + Clone + Send + 'static>(
+pub fn prompt_side_projects<T: FromStr + Display + PartialEq>(
     service: &str,
     sides: &[Side],
     side_projects: &mut Vec<SideProject<T>>,
 ) -> Result<bool> {
-    let service = service.to_string();
-    let sides = sides.to_vec();
-    let mut projects = side_projects.clone();
-    let (changed, projects) = crate::prompt::run_on_input_thread(move || {
-        let changed = prompt_side_projects_from(
-            &mut std::io::stdin().lock(),
-            &service,
-            &sides,
-            &mut projects,
-        )?;
-        Ok((changed, projects))
-    })
-    .await?;
-    *side_projects = projects;
-    Ok(changed)
+    prompt_side_projects_from(&mut std::io::stdin().lock(), service, sides, side_projects)
 }
 
 fn prompt_side_projects_from<R: BufRead, T: FromStr + Display + PartialEq>(
