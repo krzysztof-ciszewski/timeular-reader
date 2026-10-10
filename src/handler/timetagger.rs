@@ -4,10 +4,8 @@ use chrono::Utc;
 use log::debug;
 use rand::{distributions::Alphanumeric, Rng};
 use reqwest::Client;
-use rpassword::prompt_password;
 use serde::{Deserialize, Serialize};
 use simplelog::info;
-use std::io;
 
 use crate::{
     handler::timetagger::config::update_config,
@@ -104,7 +102,7 @@ fn generate_record_key() -> String {
 
 pub async fn create_handler(setup: bool) -> Result<Timetagger> {
     let mut config = create_config()?;
-    update_vendor_config(&mut config, setup)?;
+    update_vendor_config(&mut config, setup).await?;
 
     Ok(Timetagger {
         client: Client::builder()
@@ -114,14 +112,15 @@ pub async fn create_handler(setup: bool) -> Result<Timetagger> {
     })
 }
 
-fn update_vendor_config(config: &mut TimetaggerConfig, setup: bool) -> Result<()> {
+async fn update_vendor_config(config: &mut TimetaggerConfig, setup: bool) -> Result<()> {
     if setup || config.api_key.is_empty() {
         let message = if config.api_key.is_empty() {
             "Provide your TimeTagger API token".to_string()
         } else {
             "Provide your TimeTagger API token (leave blank to keep the current value)".to_string()
         };
-        let api_key = prompt_password(message)
+        let api_key = crate::prompt::read_password(message)
+            .await
             .context("failed to read TimeTagger API token")?
             .trim()
             .to_string();
@@ -143,9 +142,8 @@ fn update_vendor_config(config: &mut TimetaggerConfig, setup: bool) -> Result<()
         };
         info!("{message}");
 
-        let mut timetagger_url = String::new();
-        io::stdin()
-            .read_line(&mut timetagger_url)
+        let timetagger_url = crate::prompt::read_line()
+            .await
             .context("failed to read TimeTagger records API URL")?;
         let timetagger_url = timetagger_url.trim();
 

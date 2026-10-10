@@ -7,7 +7,6 @@ use http_data::*;
 use log::{debug, info};
 use reqwest::Client;
 use reqwest_cookie_store::CookieStoreMutex;
-use rpassword::prompt_password;
 use std::string::String;
 use std::sync::Arc;
 
@@ -129,7 +128,6 @@ async fn setup_vendor_config(
     sides: &[Side],
 ) -> Result<()> {
     if setup || config.hackaru_url.is_empty() {
-        let mut hackaru_url = String::new();
         let mut message = String::from("Provide your Hackaru URL");
         if config.project_id != 0 {
             message.push_str(
@@ -138,11 +136,11 @@ async fn setup_vendor_config(
         }
         info!("{message}");
 
-        std::io::stdin()
-            .read_line(&mut hackaru_url)
+        let hackaru_url = crate::prompt::read_line()
+            .await
             .context("failed to read Hackaru URL")?;
 
-        hackaru_url = hackaru_url.trim().to_string();
+        let hackaru_url = hackaru_url.trim().to_string();
 
         if !hackaru_url.is_empty() {
             config.hackaru_url = hackaru_url;
@@ -151,7 +149,6 @@ async fn setup_vendor_config(
     }
 
     if setup || config.project_id == 0 {
-        let mut project_id = String::new();
         let mut message = String::from("Provide your Hackaru project ID");
         if config.project_id != 0 {
             message.push_str(
@@ -160,11 +157,11 @@ async fn setup_vendor_config(
         }
         info!("{message}");
 
-        std::io::stdin()
-            .read_line(&mut project_id)
+        let project_id = crate::prompt::read_line()
+            .await
             .context("failed to read Hackaru project ID")?;
 
-        project_id = project_id.trim().to_string();
+        let project_id = project_id.trim().to_string();
 
         if !project_id.is_empty() {
             config.project_id = project_id
@@ -174,12 +171,11 @@ async fn setup_vendor_config(
         }
     }
 
-    if setup && prompt_side_projects("hackaru", sides, &mut config.side_projects)? {
+    if setup && prompt_side_projects("hackaru", sides, &mut config.side_projects).await? {
         update_config(config)?;
     }
 
     if setup || config.email.is_empty() {
-        let mut email = String::new();
         let mut message = String::from("Provide your Hackaru email");
         if !config.email.is_empty() {
             message.push_str(
@@ -188,11 +184,11 @@ async fn setup_vendor_config(
         }
         info!("{message}");
 
-        std::io::stdin()
-            .read_line(&mut email)
+        let email = crate::prompt::read_line()
+            .await
             .context("failed to read Hackaru email")?;
 
-        email = email.trim().to_string();
+        let email = email.trim().to_string();
 
         if !email.is_empty() {
             config.email = email;
@@ -205,7 +201,8 @@ async fn setup_vendor_config(
         if !config.password.is_empty() {
             message.push_str("\nleave blank to use current value");
         }
-        let password = prompt_password(message)
+        let password = crate::prompt::read_password(message)
+            .await
             .context("failed to read Hackaru password")?
             .trim()
             .to_string();

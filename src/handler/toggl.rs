@@ -3,7 +3,6 @@ use async_trait::async_trait;
 use chrono::SecondsFormat;
 use log::debug;
 use reqwest::Client;
-use rpassword::prompt_password;
 use serde::Serialize;
 use simplelog::info;
 use tinytemplate::TinyTemplate;
@@ -98,14 +97,13 @@ pub async fn create_handler(setup: bool, sides: &[Side]) -> Result<Toggl> {
     let client = Client::builder()
         .build()
         .context("failed to create Toggl HTTP client")?;
-    update_vendor_config(&mut config, setup, sides)?;
+    update_vendor_config(&mut config, setup, sides).await?;
 
     Ok(Toggl { client, config })
 }
 
-fn update_vendor_config(config: &mut TogglConfig, setup: bool, sides: &[Side]) -> Result<()> {
+async fn update_vendor_config(config: &mut TogglConfig, setup: bool, sides: &[Side]) -> Result<()> {
     if setup || config.workspace_id == 0 {
-        let mut workspace_id = String::new();
         let mut message = String::from("Provide your Toggl workspace id");
         if config.workspace_id != 0 {
             message.push_str(
@@ -118,10 +116,10 @@ fn update_vendor_config(config: &mut TogglConfig, setup: bool, sides: &[Side]) -
         }
         info!("{message}");
 
-        std::io::stdin()
-            .read_line(&mut workspace_id)
+        let workspace_id = crate::prompt::read_line()
+            .await
             .context("failed to read Toggl workspace ID")?;
-        workspace_id = workspace_id.trim().to_string();
+        let workspace_id = workspace_id.trim().to_string();
 
         if !workspace_id.is_empty() {
             config.workspace_id = workspace_id
@@ -132,7 +130,6 @@ fn update_vendor_config(config: &mut TogglConfig, setup: bool, sides: &[Side]) -
     }
 
     if setup || config.project_id == 0 {
-        let mut project_id = String::new();
         let mut message = String::from("Provide your Toggl project id");
         if config.project_id != 0 {
             message.push_str(
@@ -141,11 +138,11 @@ fn update_vendor_config(config: &mut TogglConfig, setup: bool, sides: &[Side]) -
         }
         log::info!("{message}");
 
-        std::io::stdin()
-            .read_line(&mut project_id)
+        let project_id = crate::prompt::read_line()
+            .await
             .context("failed to read Toggl project ID")?;
 
-        project_id = project_id.trim().to_string();
+        let project_id = project_id.trim().to_string();
 
         if !project_id.is_empty() {
             config.project_id = project_id
@@ -155,12 +152,11 @@ fn update_vendor_config(config: &mut TogglConfig, setup: bool, sides: &[Side]) -
         }
     }
 
-    if setup && prompt_side_projects("Toggl", sides, &mut config.side_projects)? {
+    if setup && prompt_side_projects("Toggl", sides, &mut config.side_projects).await? {
         update_config(config)?;
     }
 
     if setup || config.email.is_empty() {
-        let mut email = String::new();
         let mut message = String::from("Provide your Toggl email");
         if !config.email.is_empty() {
             message.push_str(
@@ -169,11 +165,11 @@ fn update_vendor_config(config: &mut TogglConfig, setup: bool, sides: &[Side]) -
         }
         log::info!("{message}");
 
-        std::io::stdin()
-            .read_line(&mut email)
+        let email = crate::prompt::read_line()
+            .await
             .context("failed to read Toggl email")?;
 
-        email = email.trim().to_string();
+        let email = email.trim().to_string();
 
         if !email.is_empty() {
             config.email = email;
@@ -186,7 +182,8 @@ fn update_vendor_config(config: &mut TogglConfig, setup: bool, sides: &[Side]) -
         if !config.password.is_empty() {
             message.push_str("\nleave blank to use current value");
         }
-        let password = prompt_password(message)
+        let password = crate::prompt::read_password(message)
+            .await
             .context("failed to read Toggl password")?
             .trim()
             .to_string();

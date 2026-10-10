@@ -1,7 +1,7 @@
 extern crate core;
 
 use std::path::Path;
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 
 use anyhow::{Context as _, Result};
 use btleplug::api::{Central, CentralEvent, Manager as _, Peripheral, ScanFilter};
@@ -16,6 +16,7 @@ use crate::tracker::reader;
 
 pub mod config;
 pub mod handler;
+pub mod prompt;
 #[cfg(test)]
 mod test_support;
 pub mod tracker;
@@ -51,6 +52,7 @@ async fn main() -> Result<()> {
 
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let mut readers: Vec<JoinHandle<()>> = Vec::new();
+    let mut tracker_ids = HashSet::new();
     let ctrl_c = tokio::signal::ctrl_c();
     tokio::pin!(ctrl_c);
     let mut shutdown_error = None;
@@ -89,25 +91,12 @@ async fn main() -> Result<()> {
                         if !name.to_lowercase().contains("timeular") {
                             continue;
                         }
-                        readers.push(spawn_reader(id, &adapter, setup, shutdown_rx.clone()));
+                        if tracker_ids.insert(id.clone()) {
+                            readers.push(spawn_reader(id, &adapter, setup, shutdown_rx.clone()));
+                        }
                     }
                     CentralEvent::DeviceDisconnected(id) => {
-                        let per = match adapter.peripheral(&id).await {
-                            Ok(per) => per,
-                            Err(error) => {
-                                warn!("Failed to inspect disconnected Bluetooth device: {error}");
-                                continue;
-                            }
-                        };
-                        let name = match get_name(&per).await {
-                            Ok(name) => name,
-                            Err(error) => {
-                                warn!("Failed to read disconnected Bluetooth device name: {error:#}");
-                                continue;
-                            }
-                        };
-
-                        if !name.to_lowercase().contains("timeular") {
+                        if !tracker_ids.remove(&id) {
                             continue;
                         }
 
