@@ -30,6 +30,14 @@ impl Tracker {
 
         completed
     }
+
+    pub fn finish(&mut self, now: DateTime<Local>) -> Option<TimeEntry> {
+        self.current.take().map(|(side, start)| TimeEntry {
+            side,
+            start,
+            end: now,
+        })
+    }
 }
 
 #[cfg(test)]
@@ -131,5 +139,27 @@ mod tests {
             })
         );
         assert_eq!(tracker.on_side(None, at(30)), None);
+    }
+
+    #[test]
+    fn finishing_completes_and_clears_the_active_entry() {
+        let work = side(1, "Work");
+        let mut tracker = Tracker::default();
+        tracker.on_side(Some(&work), at(10));
+
+        assert_eq!(
+            tracker.finish(at(20)),
+            Some(TimeEntry {
+                side: work,
+                start: at(10),
+                end: at(20),
+            })
+        );
+        assert_eq!(tracker.finish(at(30)), None);
+    }
+
+    #[test]
+    fn finishing_without_an_active_entry_returns_none() {
+        assert_eq!(Tracker::default().finish(at(10)), None);
     }
 }
