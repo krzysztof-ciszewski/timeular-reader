@@ -95,7 +95,7 @@ fn ensure_file_exists(path: &PathBuf) -> Result<()> {
 mod tests {
     use super::{get_config_from_path, update_config_at_path, Config};
     use serde::{Deserialize, Serialize};
-    use std::{env, fs, path::PathBuf, time::SystemTime};
+    use std::{env, fs, path::PathBuf};
 
     #[derive(Debug, Default, Deserialize, PartialEq, Serialize)]
     struct TestConfig {
@@ -106,14 +106,18 @@ mod tests {
     impl<'de> Config<'de> for TestConfig {}
 
     fn temporary_config_path() -> PathBuf {
-        let unique = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        env::temp_dir().join(format!(
-            "timeular-reader-config-{}-{unique}.toml",
-            std::process::id()
-        ))
+        loop {
+            let directory = env::temp_dir().join(format!(
+                "timeular-reader-config-tests-{}-{}",
+                std::process::id(),
+                rand::random::<u64>()
+            ));
+            match fs::create_dir(&directory) {
+                Ok(()) => return directory.join("config.toml"),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => panic!("failed to create test directory: {error}"),
+            }
+        }
     }
 
     #[test]
@@ -147,7 +151,8 @@ mod tests {
             other
         );
 
-        fs::remove_file(path).unwrap();
+        fs::remove_file(&path).unwrap();
+        fs::remove_dir(path.parent().unwrap()).unwrap();
     }
 
     #[test]
@@ -158,6 +163,7 @@ mod tests {
         let error = get_config_from_path::<TestConfig>(&path, "service").unwrap_err();
         assert!(format!("{error:#}").contains("failed to parse config file"));
 
-        fs::remove_file(path).unwrap();
+        fs::remove_file(&path).unwrap();
+        fs::remove_dir(path.parent().unwrap()).unwrap();
     }
 }
