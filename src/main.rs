@@ -20,11 +20,24 @@ pub mod handler;
 mod test_support;
 pub mod tracker;
 
+enum DeviceEvent<Id> {
+    Discovered(Id),
+    TrackerIdentified(Id),
+    Disconnected(Id),
+}
+
+enum DeviceEventAction<Id> {
+    Inspect(Id),
+    StartReader(Id),
+    Stop,
+    Ignore,
+}
+
 struct TrackedDevices<Id> {
     ids: HashSet<Id>,
 }
 
-impl<Id: Eq + Hash> TrackedDevices<Id> {
+impl<Id: Eq + Hash + Clone> TrackedDevices<Id> {
     fn new() -> Self {
         Self {
             ids: HashSet::new(),
@@ -37,6 +50,19 @@ impl<Id: Eq + Hash> TrackedDevices<Id> {
 
     fn register(&mut self, id: Id) -> bool {
         self.ids.insert(id)
+    }
+
+    fn handle_event(&mut self, event: DeviceEvent<Id>) -> DeviceEventAction<Id> {
+        match event {
+            DeviceEvent::Discovered(id) if self.contains(&id) => DeviceEventAction::Ignore,
+            DeviceEvent::Discovered(id) => DeviceEventAction::Inspect(id),
+            DeviceEvent::TrackerIdentified(id) if self.register(id.clone()) => {
+                DeviceEventAction::StartReader(id)
+            }
+            DeviceEvent::TrackerIdentified(_) => DeviceEventAction::Ignore,
+            DeviceEvent::Disconnected(id) if self.ids.remove(&id) => DeviceEventAction::Stop,
+            DeviceEvent::Disconnected(_) => DeviceEventAction::Ignore,
+        }
     }
 }
 
@@ -91,12 +117,17 @@ async fn main() -> Result<()> {
                 let Some(event) = event else {
                     break;
                 };
-                match event {
+                let action = match event {
                     CentralEvent::DeviceDiscovered(id) => {
-                        if tracked_devices.contains(&id) {
-                            continue;
-                        }
-
+                        tracked_devices.handle_event(DeviceEvent::Discovered(id))
+                    }
+                    CentralEvent::DeviceDisconnected(id) => {
+                        tracked_devices.handle_event(DeviceEvent::Disconnected(id))
+                    }
+                    _ => continue,
+                };
+                match action {
+                    DeviceEventAction::Inspect(id) => {
                         let per = match adapter.peripheral(&id).await {
                             Ok(per) => per,
                             Err(error) => {
@@ -114,19 +145,20 @@ async fn main() -> Result<()> {
                         if !name.to_lowercase().contains("timeular") {
                             continue;
                         }
-                        if tracked_devices.register(id.clone()) {
+                        if let DeviceEventAction::StartReader(id) =
+                            tracked_devices.handle_event(DeviceEvent::TrackerIdentified(id))
+                        {
                             readers.push(spawn_reader(id, &adapter, setup, shutdown_rx.clone()));
                         }
                     }
-                    CentralEvent::DeviceDisconnected(id) => {
-                        if !tracked_devices.contains(&id) {
-                            continue;
-                        }
-
+                    DeviceEventAction::StartReader(_) => {
+                        unreachable!("reader starts are only requested after tracker identification")
+                    }
+                    DeviceEventAction::Stop => {
                         info!("Tracker disconnected");
                         break;
                     }
-                    _ => {}
+                    DeviceEventAction::Ignore => {}
                 }
             }
         }
@@ -219,24 +251,33 @@ fn create_logger(verbosity: &u8, quiet: bool) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{should_setup, TrackedDevices};
+    use super::{should_setup, DeviceEvent, DeviceEventAction, TrackedDevices};
     use std::{env, fs, time::SystemTime};
 
     #[test]
-    fn known_disconnect_is_identified_only_by_recorded_id() {
+    fn known_disconnect_stops_tracking_and_repeated_disconnect_is_ignored() {
         let mut devices = TrackedDevices::new();
         assert!(devices.register(42));
 
-        assert!(devices.contains(&42));
+        assert!(matches!(
+            devices.handle_event(DeviceEvent::Disconnected(42)),
+            DeviceEventAction::Stop
+        ));
+        assert!(matches!(
+            devices.handle_event(DeviceEvent::Disconnected(42)),
+            DeviceEventAction::Ignore
+        ));
     }
 
     #[test]
     fn unrelated_disconnect_is_ignored() {
         let mut devices = TrackedDevices::new();
-        assert!(!devices.contains(&42));
         assert!(devices.register(42));
 
-        assert!(!devices.contains(&7));
+        assert!(matches!(
+            devices.handle_event(DeviceEvent::Disconnected(7)),
+            DeviceEventAction::Ignore
+        ));
         assert!(devices.contains(&42));
     }
 
@@ -246,12 +287,37 @@ mod tests {
         let mut readers_started = 0;
 
         for id in [42, 42, 7, 42, 7] {
-            if devices.register(id) {
-                readers_started += 1;
+            if let DeviceEventAction::Inspect(id) =
+                devices.handle_event(DeviceEvent::Discovered(id))
+            {
+                if matches!(
+                    devices.handle_event(DeviceEvent::TrackerIdentified(id)),
+                    DeviceEventAction::StartReader(_)
+                ) {
+                    readers_started += 1;
+                }
             }
         }
 
         assert_eq!(readers_started, 2);
+    }
+
+    #[test]
+    fn disconnect_handling_does_not_request_device_inspection() {
+        let mut devices = TrackedDevices::new();
+        assert!(devices.register(42));
+        let mut peripheral_lookups = 0;
+        let mut name_lookups = 0;
+
+        let action = devices.handle_event(DeviceEvent::Disconnected(42));
+        if matches!(action, DeviceEventAction::Inspect(_)) {
+            peripheral_lookups += 1;
+            name_lookups += 1;
+        }
+
+        assert!(matches!(action, DeviceEventAction::Stop));
+        assert_eq!(peripheral_lookups, 0);
+        assert_eq!(name_lookups, 0);
     }
 
     #[test]
