@@ -303,7 +303,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn shutdown_flushes_the_active_entry_once() {
+    async fn repeated_shutdown_flushes_the_active_entry_once() {
         let handler = Arc::new(RecordingHandler::default());
         let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
         let (ready_tx, ready_rx) = oneshot::channel();
@@ -329,6 +329,7 @@ mod tests {
         });
 
         ready_rx.await.unwrap();
+        shutdown_tx.send_replace(true);
         shutdown_tx.send_replace(true);
         task.await.unwrap().unwrap();
 
