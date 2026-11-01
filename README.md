@@ -36,6 +36,8 @@ You don't have to set up all the sides, press q on a side you don't want to use 
 
 After the initial setup you can modify `config.toml` in the executable's directory.
 
+During tracking, disconnecting a recognized tracker stops the application and submits its active time entry before exit. Disconnects from unrelated Bluetooth devices are ignored, and repeated discovery events for the same tracker do not start additional readers. Reconnection is not automatic; restart the application to connect again.
+
 ### Project per side
 Toggl, Clockify, Hackaru (and the Example handler) can log each side of the tracker to a different project.
 During `--setup`, after the default project id, you'll be asked for a project id for every labeled side:

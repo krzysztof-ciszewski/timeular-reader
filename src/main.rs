@@ -1,7 +1,7 @@
 extern crate core;
 
-use std::path::Path;
 use std::sync::Arc;
+use std::{collections::HashSet, hash::Hash, path::Path};
 
 use anyhow::{Context as _, Result};
 use btleplug::api::{Central, CentralEvent, Manager as _, Peripheral, ScanFilter};
@@ -19,6 +19,26 @@ pub mod handler;
 #[cfg(test)]
 mod test_support;
 pub mod tracker;
+
+struct TrackedDevices<Id> {
+    ids: HashSet<Id>,
+}
+
+impl<Id: Eq + Hash> TrackedDevices<Id> {
+    fn new() -> Self {
+        Self {
+            ids: HashSet::new(),
+        }
+    }
+
+    fn contains(&self, id: &Id) -> bool {
+        self.ids.contains(id)
+    }
+
+    fn register(&mut self, id: Id) -> bool {
+        self.ids.insert(id)
+    }
+}
 
 #[derive(Parser, Debug)]
 #[clap(about, long_about = None)]
@@ -51,6 +71,7 @@ async fn main() -> Result<()> {
 
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let mut readers: Vec<JoinHandle<()>> = Vec::new();
+    let mut tracked_devices = TrackedDevices::new();
     let ctrl_c = tokio::signal::ctrl_c();
     tokio::pin!(ctrl_c);
     let mut shutdown_error = None;
@@ -72,6 +93,10 @@ async fn main() -> Result<()> {
                 };
                 match event {
                     CentralEvent::DeviceDiscovered(id) => {
+                        if tracked_devices.contains(&id) {
+                            continue;
+                        }
+
                         let per = match adapter.peripheral(&id).await {
                             Ok(per) => per,
                             Err(error) => {
@@ -89,25 +114,12 @@ async fn main() -> Result<()> {
                         if !name.to_lowercase().contains("timeular") {
                             continue;
                         }
-                        readers.push(spawn_reader(id, &adapter, setup, shutdown_rx.clone()));
+                        if tracked_devices.register(id.clone()) {
+                            readers.push(spawn_reader(id, &adapter, setup, shutdown_rx.clone()));
+                        }
                     }
                     CentralEvent::DeviceDisconnected(id) => {
-                        let per = match adapter.peripheral(&id).await {
-                            Ok(per) => per,
-                            Err(error) => {
-                                warn!("Failed to inspect disconnected Bluetooth device: {error}");
-                                continue;
-                            }
-                        };
-                        let name = match get_name(&per).await {
-                            Ok(name) => name,
-                            Err(error) => {
-                                warn!("Failed to read disconnected Bluetooth device name: {error:#}");
-                                continue;
-                            }
-                        };
-
-                        if !name.to_lowercase().contains("timeular") {
+                        if !tracked_devices.contains(&id) {
                             continue;
                         }
 
@@ -207,8 +219,40 @@ fn create_logger(verbosity: &u8, quiet: bool) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::should_setup;
+    use super::{should_setup, TrackedDevices};
     use std::{env, fs, time::SystemTime};
+
+    #[test]
+    fn known_disconnect_is_identified_only_by_recorded_id() {
+        let mut devices = TrackedDevices::new();
+        assert!(devices.register(42));
+
+        assert!(devices.contains(&42));
+    }
+
+    #[test]
+    fn unrelated_disconnect_is_ignored() {
+        let mut devices = TrackedDevices::new();
+        assert!(!devices.contains(&42));
+        assert!(devices.register(42));
+
+        assert!(!devices.contains(&7));
+        assert!(devices.contains(&42));
+    }
+
+    #[test]
+    fn repeated_discovery_starts_only_one_reader_per_device() {
+        let mut devices = TrackedDevices::new();
+        let mut readers_started = 0;
+
+        for id in [42, 42, 7, 42, 7] {
+            if devices.register(id) {
+                readers_started += 1;
+            }
+        }
+
+        assert_eq!(readers_started, 2);
+    }
 
     #[test]
     fn setup_defaults_to_missing_config_and_can_be_forced() {
