@@ -183,18 +183,22 @@ where
     });
 
     loop {
+        if *shutdown.borrow() {
+            break;
+        }
+
         let side_num = tokio::select! {
             biased;
-            orientation = orientations.next() => match orientation {
-                Some(side_num) => side_num,
-                None => break,
-            },
             changed = shutdown.changed() => {
                 if changed.is_err() || *shutdown.borrow() {
                     break;
                 }
                 continue;
-            }
+            },
+            orientation = orientations.next() => match orientation {
+                Some(side_num) => side_num,
+                None => break,
+            },
         };
 
         let Some(side_num) = side_num else {
@@ -394,6 +398,47 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].side.label, "Work");
         assert!(entries[0].end >= entries[0].start);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn shutdown_takes_priority_over_continuous_orientation_notifications() {
+        let handler = Arc::new(RecordingHandler::default());
+        let (shutdown_transmitter, mut shutdown_receiver) = watch::channel(false);
+        let (active_transmitter, active_receiver) = oneshot::channel();
+        let orientations = stream::unfold(
+            (0, Some(active_transmitter)),
+            |(state, active_transmitter)| async move {
+                if state == 0 {
+                    if let Some(active_transmitter) = active_transmitter {
+                        let _ = active_transmitter.send(());
+                    }
+                } else {
+                    tokio::task::yield_now().await;
+                }
+                Some((Some(1), (state + 1, None)))
+            },
+        );
+        tokio::spawn(async move {
+            active_receiver.await.unwrap();
+            shutdown_transmitter.send_replace(true);
+        });
+
+        tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            process_orientations(
+                orientations,
+                &sides(),
+                handler.clone(),
+                &mut shutdown_receiver,
+            ),
+        )
+        .await
+        .expect("shutdown should not be starved by orientation notifications")
+        .unwrap();
+
+        let entries = handler.entries.lock().unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].side.label, "Work");
     }
 
     #[tokio::test]

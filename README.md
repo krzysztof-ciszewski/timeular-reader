@@ -60,7 +60,7 @@ To control output verbosity you can pass `--verbose` or `-v`, you can add multip
 
 There is also `--quiet`, `-q` mode to mute all output.
 
-Configuration, setup, Bluetooth, and service errors include context about the operation that failed. Time-entry submissions retry transient network failures and HTTP 429/5xx responses up to three attempts with backoff; permanent 4xx responses are not retried. Submissions run independently of orientation processing, and final failures are logged while tracking continues. Pending entries are held in memory only, so a crash can lose unsubmitted entries; durable queueing is tracked in [#34](https://github.com/krzysztof-ciszewski/timeular-reader/issues/34). An unset or unknown handler is an error; use `--setup` to select one. Traggo is not implemented and returns an explicit error when asked to record time.
+Configuration, setup, Bluetooth, and service errors include context about the operation that failed. Time-entry submissions have a 15-second timeout per attempt and retry transient network failures and HTTP 429/5xx responses up to three attempts with backoff; permanent 4xx responses are not retried. Submissions run independently of orientation processing, and final failures are logged while tracking continues. Pending entries are held in memory only, so a crash can lose unsubmitted entries; durable queueing is tracked in [#34](https://github.com/krzysztof-ciszewski/timeular-reader/issues/34). An unset or unknown handler is an error; use `--setup` to select one. Traggo is not implemented and returns an explicit error when asked to record time.
 
 ### Toggl
 To get your project id and workspace id, on the left panel under Manage, click Projects. Then click on the project name you want to use.

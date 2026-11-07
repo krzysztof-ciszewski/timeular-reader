@@ -64,7 +64,7 @@ impl Handler for Clockify {
             self.config.base_url.trim_end_matches('/'),
             time_entries_url,
         );
-        let res = super::http::send_with_retry("Clockify time-entry request", || {
+        super::http::send_with_retry("Clockify time-entry request", || {
             self.client
                 .post(&url)
                 .header("x-api-key", &self.config.api_key)
@@ -72,10 +72,6 @@ impl Handler for Clockify {
         })
         .await
         .context("failed to submit time entry to Clockify")?;
-
-        res.text()
-            .await
-            .context("failed to read Clockify response body")?;
         Ok(())
     }
 }

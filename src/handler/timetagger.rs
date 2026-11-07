@@ -65,7 +65,7 @@ impl Handler for Timetagger {
         );
 
         let url = self.config.timetagger_url.trim_end_matches('/').to_string();
-        let response = super::http::send_with_retry("TimeTagger time-entry request", || {
+        let response_body = super::http::send_with_retry("TimeTagger time-entry request", || {
             self.client
                 .put(&url)
                 .header("authtoken", &self.config.api_key)
@@ -74,9 +74,7 @@ impl Handler for Timetagger {
         .await
         .context("failed to submit time entry to TimeTagger")?;
 
-        let result = response
-            .json::<RecordsResponse>()
-            .await
+        let result = serde_json::from_slice::<RecordsResponse>(&response_body)
             .context("failed to parse TimeTagger response")?;
         if !result.accepted.iter().any(|accepted| accepted == &key)
             || !result.failed.is_empty()
@@ -232,5 +230,23 @@ mod tests {
 
         assert!(format!("{error:#}").contains("TimeTagger did not accept record"));
         server.finish();
+    }
+
+    #[tokio::test]
+    async fn malformed_response_json_is_not_retried() {
+        let server = MockServer::start(1, |_, _| (200, "not json".into()));
+        let config = super::config::TimetaggerConfig {
+            timetagger_url: server.url().into(),
+            ..super::config::TimetaggerConfig::default()
+        };
+        let handler = Timetagger {
+            client: Client::new(),
+            config,
+        };
+
+        let error = handler.handle(&time_entry(1, "Work")).await.unwrap_err();
+
+        assert!(format!("{error:#}").contains("failed to parse TimeTagger response"));
+        assert_eq!(server.finish().len(), 1);
     }
 }

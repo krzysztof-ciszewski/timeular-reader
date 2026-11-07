@@ -26,7 +26,7 @@ impl Handler for Example {
         );
 
         let url = self.config.base_url.trim_end_matches('/').to_string();
-        let response = super::http::send_with_retry("Example time-entry request", || {
+        super::http::send_with_retry("Example time-entry request", || {
             self.client
                 .post(&url)
                 .header(CONTENT_TYPE, "application/json")
@@ -34,11 +34,6 @@ impl Handler for Example {
         })
         .await
         .context("failed to submit time entry to Example handler")?;
-
-        response
-            .text()
-            .await
-            .context("failed to read Example API response")?;
         Ok(())
     }
 }

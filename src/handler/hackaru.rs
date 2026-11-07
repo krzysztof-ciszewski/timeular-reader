@@ -40,17 +40,16 @@ impl Handler for Hackaru {
             self.config.hackaru_url.trim_end_matches('/'),
             self.config.activities_rel_url.trim_matches('/')
         );
-        let response = super::http::send_with_retry("Hackaru activity start request", || {
+        let response_body = super::http::send_with_retry("Hackaru activity start request", || {
             self.client
                 .post(&start_url)
                 .header("x-requested-with", "XMLHttpRequest")
                 .json(&activity_start)
         })
         .await
-        .context("failed to start Hackaru activity")?
-        .json::<ActivityResponse>()
-        .await
-        .context("failed to parse Hackaru activity response")?;
+        .context("failed to start Hackaru activity")?;
+        let response = serde_json::from_slice::<ActivityResponse>(&response_body)
+            .context("failed to parse Hackaru activity response")?;
 
         let activity_end = ActivityEndRequest {
             activity: ActivityEndData {

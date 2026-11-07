@@ -71,7 +71,7 @@ impl Handler for Toggl {
             self.config.base_url.trim_end_matches('/'),
             time_entries_url,
         );
-        let res = super::http::send_with_retry("Toggl time-entry request", || {
+        super::http::send_with_retry("Toggl time-entry request", || {
             self.client
                 .post(&url)
                 .basic_auth(&self.config.email, Some(&self.config.password))
@@ -79,10 +79,6 @@ impl Handler for Toggl {
         })
         .await
         .context("failed to submit time entry to Toggl")?;
-
-        res.text()
-            .await
-            .context("failed to read Toggl response body")?;
         Ok(())
     }
 }
