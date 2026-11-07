@@ -1,7 +1,6 @@
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use chrono::SecondsFormat;
-use log::debug;
 use reqwest::Client;
 use rpassword::prompt_password;
 use serde::Serialize;
@@ -60,29 +59,23 @@ impl Handler for Clockify {
 
         let time_entries_url = self.get_time_entries_uri()?;
 
-        let request_builder = self
-            .client
-            .post(format!(
-                "{}/{}",
-                self.config.base_url.trim_end_matches('/'),
-                time_entries_url,
-            ))
-            .header("x-api-key", &self.config.api_key)
-            .json(&body);
-
-        let res = request_builder
-            .send()
-            .await
-            .context("failed to send time entry to Clockify")?
-            .error_for_status()
-            .context("Clockify rejected the time entry")?;
-
-        debug!(
-            "Clockify response: {}",
-            res.text()
-                .await
-                .context("failed to read Clockify response body")?
+        let url = format!(
+            "{}/{}",
+            self.config.base_url.trim_end_matches('/'),
+            time_entries_url,
         );
+        let res = super::http::send_with_retry("Clockify time-entry request", || {
+            self.client
+                .post(&url)
+                .header("x-api-key", &self.config.api_key)
+                .json(&body)
+        })
+        .await
+        .context("failed to submit time entry to Clockify")?;
+
+        res.text()
+            .await
+            .context("failed to read Clockify response body")?;
         Ok(())
     }
 }
@@ -211,7 +204,7 @@ mod tests {
 
     #[tokio::test]
     async fn reports_http_rejection() {
-        let server = MockServer::start(1, |_, _| (500, "{}".into()));
+        let server = MockServer::start(3, |_, _| (500, "{}".into()));
         let config = ClockifyConfig {
             base_url: server.url().to_string(),
             ..ClockifyConfig::default()
@@ -223,7 +216,8 @@ mod tests {
         };
         let error = handler.handle(&time_entry(1, "Work")).await.unwrap_err();
 
-        assert!(format!("{error:#}").contains("Clockify rejected the time entry"));
-        server.finish();
+        assert!(format!("{error:#}")
+            .contains("Clockify time-entry request failed with HTTP status 500"));
+        assert_eq!(server.finish().len(), 3);
     }
 }

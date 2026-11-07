@@ -64,16 +64,15 @@ impl Handler for Timetagger {
             entry.side, entry
         );
 
-        let response = self
-            .client
-            .put(self.config.timetagger_url.trim_end_matches('/'))
-            .header("authtoken", &self.config.api_key)
-            .json(&[record])
-            .send()
-            .await
-            .context("failed to send time entry to TimeTagger")?
-            .error_for_status()
-            .context("TimeTagger rejected the time entry")?;
+        let url = self.config.timetagger_url.trim_end_matches('/').to_string();
+        let response = super::http::send_with_retry("TimeTagger time-entry request", || {
+            self.client
+                .put(&url)
+                .header("authtoken", &self.config.api_key)
+                .json(&[&record])
+        })
+        .await
+        .context("failed to submit time entry to TimeTagger")?;
 
         let result = response
             .json::<RecordsResponse>()
@@ -84,9 +83,9 @@ impl Handler for Timetagger {
             || !result.errors.is_empty()
         {
             bail!(
-                "TimeTagger did not accept record {key}; failed: {:?}; errors: {:?}",
-                result.failed,
-                result.errors
+                "TimeTagger did not accept record; {} failed record(s), {} error(s)",
+                result.failed.len(),
+                result.errors.len()
             );
         }
         debug!("TimeTagger accepted record {key}");

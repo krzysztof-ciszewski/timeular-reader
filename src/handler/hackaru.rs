@@ -35,23 +35,22 @@ impl Handler for Hackaru {
             },
         };
 
-        let response = self
-            .client
-            .post(format!(
-                "{}/{}",
-                self.config.hackaru_url.trim_end_matches('/'),
-                self.config.activities_rel_url.trim_matches('/')
-            ))
-            .header("x-requested-with", "XMLHttpRequest")
-            .json(&activity_start)
-            .send()
-            .await
-            .context("failed to start Hackaru activity")?
-            .error_for_status()
-            .context("Hackaru rejected the activity start")?
-            .json::<ActivityResponse>()
-            .await
-            .context("failed to parse Hackaru activity response")?;
+        let start_url = format!(
+            "{}/{}",
+            self.config.hackaru_url.trim_end_matches('/'),
+            self.config.activities_rel_url.trim_matches('/')
+        );
+        let response = super::http::send_with_retry("Hackaru activity start request", || {
+            self.client
+                .post(&start_url)
+                .header("x-requested-with", "XMLHttpRequest")
+                .json(&activity_start)
+        })
+        .await
+        .context("failed to start Hackaru activity")?
+        .json::<ActivityResponse>()
+        .await
+        .context("failed to parse Hackaru activity response")?;
 
         let activity_end = ActivityEndRequest {
             activity: ActivityEndData {
@@ -60,20 +59,20 @@ impl Handler for Hackaru {
             },
         };
 
-        self.client
-            .put(format!(
-                "{}/{}/{}",
-                self.config.hackaru_url.trim_end_matches('/'),
-                self.config.activities_rel_url.trim_matches('/'),
-                response.id
-            ))
-            .header("x-requested-with", "XMLHttpRequest")
-            .json(&activity_end)
-            .send()
-            .await
-            .context("failed to stop Hackaru activity")?
-            .error_for_status()
-            .context("Hackaru rejected the activity stop")?;
+        let end_url = format!(
+            "{}/{}/{}",
+            self.config.hackaru_url.trim_end_matches('/'),
+            self.config.activities_rel_url.trim_matches('/'),
+            response.id
+        );
+        super::http::send_with_retry("Hackaru activity stop request", || {
+            self.client
+                .put(&end_url)
+                .header("x-requested-with", "XMLHttpRequest")
+                .json(&activity_end)
+        })
+        .await
+        .context("failed to stop Hackaru activity")?;
         Ok(())
     }
 }
@@ -226,19 +225,19 @@ async fn auth(client: &Client, config: &HackaruConfig) -> Result<()> {
         },
     };
 
-    client
-        .post(format!(
-            "{}/auth/auth_tokens",
-            config.hackaru_url.trim_end_matches('/')
-        ))
-        .json(&login)
-        .header("Content-Type", "application/json")
-        .header("X-Requested-With", "XMLHttpRequest")
-        .send()
-        .await
-        .context("failed to authenticate with Hackaru")?
-        .error_for_status()
-        .context("Hackaru rejected the provided credentials")?;
+    let url = format!(
+        "{}/auth/auth_tokens",
+        config.hackaru_url.trim_end_matches('/')
+    );
+    super::http::send_with_retry("Hackaru authentication request", || {
+        client
+            .post(&url)
+            .json(&login)
+            .header("Content-Type", "application/json")
+            .header("X-Requested-With", "XMLHttpRequest")
+    })
+    .await
+    .context("failed to authenticate with Hackaru")?;
 
     debug!("Authenticated with Hackaru");
     Ok(())
@@ -310,7 +309,7 @@ mod tests {
 
     #[tokio::test]
     async fn reports_a_failed_activity_stop() {
-        let server = MockServer::start(2, |index, _| {
+        let server = MockServer::start(4, |index, _| {
             if index == 0 {
                 (200, r#"{"id":42}"#.into())
             } else {
@@ -328,7 +327,8 @@ mod tests {
         };
         let error = handler.handle(&time_entry(1, "Work")).await.unwrap_err();
 
-        assert!(format!("{error:#}").contains("Hackaru rejected the activity stop"));
-        server.finish();
+        assert!(format!("{error:#}")
+            .contains("Hackaru activity stop request failed with HTTP status 500"));
+        assert_eq!(server.finish().len(), 4);
     }
 }

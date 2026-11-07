@@ -1,11 +1,13 @@
 use crate::tracker::config::{Handler, TimeularConfig};
 use anyhow::{bail, Result as AppResult};
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use strum::EnumIter;
 
 pub mod clockify;
 pub mod example;
 pub mod hackaru;
+mod http;
 pub mod timetagger;
 pub mod toggl;
 pub mod traggo;
@@ -51,20 +53,20 @@ impl TryFrom<&String> for Handlers {
     }
 }
 
-pub async fn get_handler(setup: bool, config: &TimeularConfig) -> AppResult<Box<dyn Handler>> {
+pub async fn get_handler(setup: bool, config: &TimeularConfig) -> AppResult<Arc<dyn Handler>> {
     match config.handler.as_str() {
-        "toggl" => Ok(Box::new(toggl::create_handler(setup, &config.sides).await?)),
-        "hackaru" => Ok(Box::new(
+        "toggl" => Ok(Arc::new(toggl::create_handler(setup, &config.sides).await?)),
+        "hackaru" => Ok(Arc::new(
             hackaru::create_handler(setup, &config.sides).await?,
         )),
-        "clockify" => Ok(Box::new(
+        "clockify" => Ok(Arc::new(
             clockify::create_handler(setup, &config.sides).await?,
         )),
-        "traggo" => Ok(Box::new(traggo::create_handler(setup).await)),
-        "example" => Ok(Box::new(
+        "traggo" => Ok(Arc::new(traggo::create_handler(setup).await)),
+        "example" => Ok(Arc::new(
             example::create_handler(setup, &config.sides).await?,
         )),
-        "timetagger" => Ok(Box::new(timetagger::create_handler(setup).await?)),
+        "timetagger" => Ok(Arc::new(timetagger::create_handler(setup).await?)),
         handler => bail!("unknown time-tracking handler: {handler}"),
     }
 }

@@ -7,10 +7,10 @@ use btleplug::api::{Central, ValueNotification};
 use btleplug::platform::{Adapter, PeripheralId};
 use chrono::{Local, TimeDelta};
 use futures::{Stream, StreamExt};
-use log::{debug, warn};
+use log::{debug, error, warn};
 use simplelog::info;
 use strum::IntoEnumIterator;
-use tokio::sync::watch;
+use tokio::sync::{mpsc, watch};
 
 use crate::tracker::config::Handler;
 use crate::tracker::state_machine::Tracker;
@@ -155,17 +155,17 @@ async fn read_orientation(
     let config = config::get_timeular_config()?;
 
     debug!("Handler is: {}", config.handler);
-    let h: Box<dyn Handler> = get_handler(setup, &config).await?;
+    let h = get_handler(setup, &config).await?;
 
     info!("Flip the device to the side you want to track");
     let orientations = notification_stream.map(|data| data.value.first().copied());
-    process_orientations(orientations, &config.sides, h.as_ref(), &mut shutdown).await
+    process_orientations(orientations, &config.sides, h, &mut shutdown).await
 }
 
 async fn process_orientations<S>(
     orientations: S,
     sides: &[config::Side],
-    handler: &dyn Handler,
+    handler: Arc<dyn Handler>,
     shutdown: &mut watch::Receiver<bool>,
 ) -> Result<()>
 where
@@ -173,9 +173,18 @@ where
 {
     let mut orientations = Box::pin(orientations);
     let mut tracker_state = Tracker::default();
+    let (submission_transmitter, mut submission_receiver) = mpsc::unbounded_channel();
+    let submission_worker = tokio::spawn(async move {
+        while let Some(entry) = submission_receiver.recv().await {
+            if let Err(error) = record_entry(handler.as_ref(), &entry).await {
+                error!("{error:#}");
+            }
+        }
+    });
 
     loop {
         let side_num = tokio::select! {
+            biased;
             orientation = orientations.next() => match orientation {
                 Some(side_num) => side_num,
                 None => break,
@@ -205,22 +214,36 @@ where
         debug!("current side: {:?}", side);
 
         if let Some(entry) = tracker_state.on_side(side, Local::now()) {
-            record_entry(handler, &entry).await?;
+            queue_entry(&submission_transmitter, &entry)?;
         }
     }
 
     if let Some(entry) = tracker_state.finish(Local::now()) {
-        record_entry(handler, &entry).await?;
+        queue_entry(&submission_transmitter, &entry)?;
     }
 
+    drop(submission_transmitter);
+    submission_worker
+        .await
+        .context("time-entry submission worker failed")?;
+
     Ok(())
+}
+
+fn queue_entry(
+    submissions: &mpsc::UnboundedSender<crate::tracker::config::TimeEntry>,
+    entry: &crate::tracker::config::TimeEntry,
+) -> Result<()> {
+    log_time_spent(entry.end - entry.start, &entry.side.label);
+    submissions
+        .send(entry.clone())
+        .context("failed to queue time entry for submission")
 }
 
 async fn record_entry(
     handler: &dyn Handler,
     entry: &crate::tracker::config::TimeEntry,
 ) -> Result<()> {
-    log_time_spent(entry.end - entry.start, &entry.side.label);
     handler
         .handle(entry)
         .await
@@ -242,12 +265,15 @@ fn format_time_spent(duration: TimeDelta) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc, Mutex,
+    };
 
     use async_trait::async_trait;
     use chrono::TimeDelta;
     use futures::stream;
-    use tokio::sync::{oneshot, watch};
+    use tokio::sync::{oneshot, watch, Notify};
 
     use crate::tracker::config::{Handler, Side, TimeEntry};
 
@@ -258,10 +284,47 @@ mod tests {
         entries: Mutex<Vec<TimeEntry>>,
     }
 
+    struct BlockingHandler {
+        calls: AtomicUsize,
+        entries: Mutex<Vec<TimeEntry>>,
+        started: Mutex<Option<oneshot::Sender<()>>>,
+        release: Notify,
+    }
+
+    struct FailingHandler {
+        calls: AtomicUsize,
+        successful_entries: Mutex<Vec<TimeEntry>>,
+    }
+
     #[async_trait]
     impl Handler for RecordingHandler {
         async fn handle(&self, entry: &TimeEntry) -> anyhow::Result<()> {
             self.entries.lock().unwrap().push(entry.clone());
+            Ok(())
+        }
+    }
+
+    #[async_trait]
+    impl Handler for BlockingHandler {
+        async fn handle(&self, entry: &TimeEntry) -> anyhow::Result<()> {
+            if self.calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                if let Some(started) = self.started.lock().unwrap().take() {
+                    let _ = started.send(());
+                }
+                self.release.notified().await;
+            }
+            self.entries.lock().unwrap().push(entry.clone());
+            Ok(())
+        }
+    }
+
+    #[async_trait]
+    impl Handler for FailingHandler {
+        async fn handle(&self, entry: &TimeEntry) -> anyhow::Result<()> {
+            if self.calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                anyhow::bail!("submission failed");
+            }
+            self.successful_entries.lock().unwrap().push(entry.clone());
             Ok(())
         }
     }
@@ -284,14 +347,14 @@ mod tests {
 
     #[tokio::test]
     async fn stream_end_flushes_the_active_entry_once() {
-        let handler = RecordingHandler::default();
-        let (_shutdown_tx, mut shutdown_rx) = watch::channel(false);
+        let handler = Arc::new(RecordingHandler::default());
+        let (_shutdown_transmitter, mut shutdown_receiver) = watch::channel(false);
 
         process_orientations(
             stream::iter([Some(1)]),
             &sides(),
-            &handler,
-            &mut shutdown_rx,
+            handler.clone(),
+            &mut shutdown_receiver,
         )
         .await
         .unwrap();
@@ -305,7 +368,7 @@ mod tests {
     #[tokio::test]
     async fn repeated_shutdown_flushes_the_active_entry_once() {
         let handler = Arc::new(RecordingHandler::default());
-        let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
+        let (shutdown_transmitter, mut shutdown_receiver) = watch::channel(false);
         let (ready_tx, ready_rx) = oneshot::channel();
         let orientations = stream::unfold((0, Some(ready_tx)), |(state, ready_tx)| async move {
             if state == 0 {
@@ -319,18 +382,12 @@ mod tests {
         });
         let task_handler = handler.clone();
         let task = tokio::spawn(async move {
-            process_orientations(
-                orientations,
-                &sides(),
-                task_handler.as_ref(),
-                &mut shutdown_rx,
-            )
-            .await
+            process_orientations(orientations, &sides(), task_handler, &mut shutdown_receiver).await
         });
 
         ready_rx.await.unwrap();
-        shutdown_tx.send_replace(true);
-        shutdown_tx.send_replace(true);
+        shutdown_transmitter.send_replace(true);
+        shutdown_transmitter.send_replace(true);
         task.await.unwrap().unwrap();
 
         let entries = handler.entries.lock().unwrap();
@@ -341,13 +398,86 @@ mod tests {
 
     #[tokio::test]
     async fn stream_end_without_an_active_entry_does_not_call_handler() {
-        let handler = RecordingHandler::default();
-        let (_shutdown_tx, mut shutdown_rx) = watch::channel(false);
+        let handler = Arc::new(RecordingHandler::default());
+        let (_shutdown_transmitter, mut shutdown_receiver) = watch::channel(false);
 
-        process_orientations(stream::empty(), &sides(), &handler, &mut shutdown_rx)
-            .await
-            .unwrap();
+        process_orientations(
+            stream::empty(),
+            &sides(),
+            handler.clone(),
+            &mut shutdown_receiver,
+        )
+        .await
+        .unwrap();
 
         assert!(handler.entries.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn pending_submission_does_not_block_orientation_processing() {
+        let (shutdown_transmitter, mut shutdown_receiver) = watch::channel(false);
+        let (started_tx, started_rx) = oneshot::channel();
+        let (flips_tx, flips_rx) = oneshot::channel();
+        let orientations = stream::unfold((0, Some(flips_tx)), |(state, flips_tx)| async move {
+            match state {
+                0..=2 => Some((Some(if state == 1 { 2 } else { 1 }), (state + 1, flips_tx))),
+                _ => {
+                    if let Some(flips_tx) = flips_tx {
+                        let _ = flips_tx.send(());
+                    }
+                    std::future::pending().await
+                }
+            }
+        });
+        let handler = Arc::new(BlockingHandler {
+            calls: AtomicUsize::new(0),
+            entries: Mutex::new(Vec::new()),
+            started: Mutex::new(Some(started_tx)),
+            release: Notify::new(),
+        });
+        let task_handler = handler.clone();
+        let task = tokio::spawn(async move {
+            process_orientations(orientations, &sides(), task_handler, &mut shutdown_receiver).await
+        });
+
+        started_rx.await.unwrap();
+        flips_rx.await.unwrap();
+        shutdown_transmitter.send_replace(true);
+        handler.release.notify_one();
+        task.await.unwrap().unwrap();
+
+        assert_eq!(handler.entries.lock().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn a_failed_submission_does_not_stop_later_entries() {
+        let handler = Arc::new(FailingHandler {
+            calls: AtomicUsize::new(0),
+            successful_entries: Mutex::new(Vec::new()),
+        });
+        let (_shutdown_transmitter, mut shutdown_receiver) = watch::channel(false);
+
+        process_orientations(
+            stream::iter([Some(1), Some(2), Some(1)]),
+            &[
+                Side {
+                    side_num: 1,
+                    label: "Work".into(),
+                    configurable: true,
+                },
+                Side {
+                    side_num: 2,
+                    label: "Break".into(),
+                    configurable: true,
+                },
+            ],
+            handler.clone(),
+            &mut shutdown_receiver,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(handler.calls.load(Ordering::SeqCst), 3);
+        assert_eq!(handler.successful_entries.lock().unwrap().len(), 2);
     }
 }
