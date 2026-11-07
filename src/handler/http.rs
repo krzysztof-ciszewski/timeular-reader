@@ -9,16 +9,28 @@ const MAX_ATTEMPTS: u32 = 3;
 const INITIAL_BACKOFF: Duration = Duration::from_millis(200);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 
-pub(super) async fn send_with_retry<F>(operation: &'static str, build_request: F) -> Result<Vec<u8>>
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum ResponseBodyPolicy {
+    Ignore,
+    ReadOnce,
+    RetryTransientTransfer,
+}
+
+pub(super) async fn send_with_retry<F>(
+    operation: &'static str,
+    body_policy: ResponseBodyPolicy,
+    build_request: F,
+) -> Result<Vec<u8>>
 where
     F: FnMut() -> RequestBuilder,
 {
-    send_with_retry_timeout(operation, REQUEST_TIMEOUT, build_request).await
+    send_with_retry_timeout(operation, REQUEST_TIMEOUT, body_policy, build_request).await
 }
 
 async fn send_with_retry_timeout<F>(
     operation: &'static str,
     request_timeout: Duration,
+    body_policy: ResponseBodyPolicy,
     mut build_request: F,
 ) -> Result<Vec<u8>>
 where
@@ -26,17 +38,26 @@ where
 {
     for attempt in 1..=MAX_ATTEMPTS {
         match build_request().timeout(request_timeout).send().await {
-            Ok(response) if response.status().is_success() => match response.bytes().await {
-                Ok(body) => return Ok(body.to_vec()),
-                Err(error) if is_retryable_transport_error(&error) && attempt < MAX_ATTEMPTS => {
-                    warn!("{operation} response body failed to transfer; retrying ({attempt}/{MAX_ATTEMPTS})");
+            Ok(response) if response.status().is_success() => {
+                if body_policy == ResponseBodyPolicy::Ignore {
+                    return Ok(Vec::new());
                 }
-                Err(error) => {
-                    return Err(error).with_context(|| {
-                        format!("{operation} response body failed after {attempt} attempt(s)")
-                    });
+                match response.bytes().await {
+                    Ok(body) => return Ok(body.to_vec()),
+                    Err(error)
+                        if body_policy == ResponseBodyPolicy::RetryTransientTransfer
+                            && is_retryable_transport_error(&error)
+                            && attempt < MAX_ATTEMPTS =>
+                    {
+                        warn!("{operation} response body failed to transfer; retrying ({attempt}/{MAX_ATTEMPTS})");
+                    }
+                    Err(error) => {
+                        return Err(error.without_url()).with_context(|| {
+                            format!("{operation} response body failed after {attempt} attempt(s)")
+                        });
+                    }
                 }
-            },
+            }
             Ok(response) => {
                 let status = response.status();
                 if !is_retryable_status(status) || attempt == MAX_ATTEMPTS {
@@ -47,7 +68,7 @@ where
             }
             Err(error) => {
                 if !is_retryable_transport_error(&error) || attempt == MAX_ATTEMPTS {
-                    return Err(error)
+                    return Err(error.without_url())
                         .with_context(|| format!("{operation} failed after {attempt} attempt(s)"));
                 }
 
@@ -100,13 +121,18 @@ fn is_retryable_transport_error(error: &reqwest::Error) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        is_retryable_status, is_retryable_transport_error, send_with_retry, send_with_retry_timeout,
+        is_retryable_status, is_retryable_transport_error, send_with_retry,
+        send_with_retry_timeout, ResponseBodyPolicy,
     };
     use crate::test_support::MockServer;
     use reqwest::StatusCode;
     use std::{
         io::{Read, Write},
         net::{TcpListener, TcpStream},
+        sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        },
         thread::{self, JoinHandle},
         time::Duration,
     };
@@ -175,9 +201,13 @@ mod tests {
         });
         let client = reqwest::Client::new();
 
-        let body = send_with_retry("test request", || client.get(server.url()))
-            .await
-            .unwrap();
+        let body = send_with_retry(
+            "test request",
+            ResponseBodyPolicy::RetryTransientTransfer,
+            || client.get(server.url()),
+        )
+        .await
+        .unwrap();
 
         assert_eq!(body, b"{}");
         assert_eq!(server.finish().len(), 2);
@@ -196,11 +226,13 @@ mod tests {
         });
         let client = reqwest::Client::new();
 
-        let body = send_with_retry("test request", || client.get(&url))
-            .await
-            .unwrap();
+        let body = send_with_retry("test request", ResponseBodyPolicy::Ignore, || {
+            client.get(&url)
+        })
+        .await
+        .unwrap();
 
-        assert_eq!(body, b"{}");
+        assert!(body.is_empty());
         worker.join().unwrap();
     }
 
@@ -213,10 +245,18 @@ mod tests {
             stream.flush().unwrap();
         });
         let client = reqwest::Client::new();
+        let build_attempts = Arc::new(AtomicUsize::new(0));
+        let attempts = Arc::clone(&build_attempts);
 
-        assert!(send_with_retry("test request", || client.get(&url))
+        assert!(
+            send_with_retry("test request", ResponseBodyPolicy::Ignore, || {
+                attempts.fetch_add(1, Ordering::SeqCst);
+                client.get(&url)
+            })
             .await
-            .is_err());
+            .is_err()
+        );
+        assert_eq!(build_attempts.load(Ordering::SeqCst), 1);
         worker.join().unwrap();
     }
 
@@ -238,9 +278,13 @@ mod tests {
         });
         let client = reqwest::Client::new();
 
-        let body = send_with_retry("test request", || client.get(&url))
-            .await
-            .unwrap();
+        let body = send_with_retry(
+            "test request",
+            ResponseBodyPolicy::RetryTransientTransfer,
+            || client.get(&url),
+        )
+        .await
+        .unwrap();
 
         assert_eq!(body, b"{}");
         worker.join().unwrap();
@@ -263,9 +307,12 @@ mod tests {
         });
         let client = reqwest::Client::new();
 
-        let body = send_with_retry_timeout("test request", Duration::from_millis(50), || {
-            client.get(&url)
-        })
+        let body = send_with_retry_timeout(
+            "test request",
+            Duration::from_millis(50),
+            ResponseBodyPolicy::RetryTransientTransfer,
+            || client.get(&url),
+        )
         .await
         .unwrap();
 
@@ -274,13 +321,61 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn does_not_retry_a_successful_response_body_transfer_failure_when_read_once() {
+        let (url, worker) = start_server(1, |_, mut stream| {
+            let mut request = [0; 1024];
+            let _ = stream.read(&mut request).unwrap();
+            stream
+                .write_all(
+                    b"HTTP/1.1 201 Created\r\nContent-Length: 20\r\nConnection: close\r\n\r\n{",
+                )
+                .unwrap();
+            stream.flush().unwrap();
+        });
+        let client = reqwest::Client::new();
+        let build_attempts = Arc::new(AtomicUsize::new(0));
+        let attempts = Arc::clone(&build_attempts);
+
+        assert!(
+            send_with_retry("test request", ResponseBodyPolicy::ReadOnce, || {
+                attempts.fetch_add(1, Ordering::SeqCst);
+                client.get(&url)
+            })
+            .await
+            .is_err()
+        );
+        assert_eq!(build_attempts.load(Ordering::SeqCst), 1);
+        worker.join().unwrap();
+    }
+
+    #[tokio::test]
+    async fn does_not_include_request_url_in_transport_errors() {
+        let client = reqwest::Client::new();
+        let url = "http://127.0.0.1:1/records?token=secret";
+
+        let error = send_with_retry_timeout(
+            "test request",
+            Duration::from_millis(10),
+            ResponseBodyPolicy::Ignore,
+            || client.get(url),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(!format!("{error:#}").contains("secret"));
+        assert!(!format!("{error:#}").contains("token="));
+    }
+
+    #[tokio::test]
     async fn does_not_retry_permanent_client_errors() {
         let server = MockServer::start(1, |_, _| (400, "{}".into()));
         let client = reqwest::Client::new();
 
-        let error = send_with_retry("test request", || client.get(server.url()))
-            .await
-            .unwrap_err();
+        let error = send_with_retry("test request", ResponseBodyPolicy::Ignore, || {
+            client.get(server.url())
+        })
+        .await
+        .unwrap_err();
 
         assert!(error.to_string().contains("HTTP status 400"));
         assert_eq!(server.finish().len(), 1);

@@ -65,12 +65,16 @@ impl Handler for Timetagger {
         );
 
         let url = self.config.timetagger_url.trim_end_matches('/').to_string();
-        let response_body = super::http::send_with_retry("TimeTagger time-entry request", || {
-            self.client
-                .put(&url)
-                .header("authtoken", &self.config.api_key)
-                .json(&[&record])
-        })
+        let response_body = super::http::send_with_retry(
+            "TimeTagger time-entry request",
+            super::http::ResponseBodyPolicy::RetryTransientTransfer,
+            || {
+                self.client
+                    .put(&url)
+                    .header("authtoken", &self.config.api_key)
+                    .json(&[&record])
+            },
+        )
         .await
         .context("failed to submit time entry to TimeTagger")?;
 
@@ -248,5 +252,41 @@ mod tests {
 
         assert!(format!("{error:#}").contains("failed to parse TimeTagger response"));
         assert_eq!(server.finish().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn retries_transient_failure_with_the_same_record_key_and_data() {
+        let server = MockServer::start(2, |index, request| {
+            let records: serde_json::Value = serde_json::from_str(request_body(request)).unwrap();
+            let key = records[0]["key"].as_str().unwrap();
+            if index == 0 {
+                (503, "{}".into())
+            } else {
+                (
+                    200,
+                    json!({"accepted": [key], "failed": [], "errors": []}).to_string(),
+                )
+            }
+        });
+        let config = super::config::TimetaggerConfig {
+            timetagger_url: server.url().into(),
+            api_key: "token".into(),
+        };
+        let entry = time_entry(1, "Focus");
+        let handler = Timetagger {
+            client: Client::new(),
+            config,
+        };
+
+        handler.handle(&entry).await.unwrap();
+
+        let requests = server.finish();
+        let first: serde_json::Value = serde_json::from_str(request_body(&requests[0])).unwrap();
+        let second: serde_json::Value = serde_json::from_str(request_body(&requests[1])).unwrap();
+        assert_eq!(first, second);
+        assert_eq!(first[0]["t1"], entry.start.timestamp());
+        assert_eq!(first[0]["t2"], entry.end.timestamp());
+        assert_eq!(first[0]["ds"], entry.side.label);
+        assert_eq!(first[0]["key"].as_str().unwrap().len(), RECORD_KEY_LENGTH);
     }
 }

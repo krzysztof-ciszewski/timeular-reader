@@ -26,12 +26,16 @@ impl Handler for Example {
         );
 
         let url = self.config.base_url.trim_end_matches('/').to_string();
-        super::http::send_with_retry("Example time-entry request", || {
-            self.client
-                .post(&url)
-                .header(CONTENT_TYPE, "application/json")
-                .header("x-api-key", &self.config.api_key)
-        })
+        super::http::send_with_retry(
+            "Example time-entry request",
+            super::http::ResponseBodyPolicy::Ignore,
+            || {
+                self.client
+                    .post(&url)
+                    .header(CONTENT_TYPE, "application/json")
+                    .header("x-api-key", &self.config.api_key)
+            },
+        )
         .await
         .context("failed to submit time entry to Example handler")?;
         Ok(())

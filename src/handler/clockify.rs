@@ -64,12 +64,16 @@ impl Handler for Clockify {
             self.config.base_url.trim_end_matches('/'),
             time_entries_url,
         );
-        super::http::send_with_retry("Clockify time-entry request", || {
-            self.client
-                .post(&url)
-                .header("x-api-key", &self.config.api_key)
-                .json(&body)
-        })
+        super::http::send_with_retry(
+            "Clockify time-entry request",
+            super::http::ResponseBodyPolicy::Ignore,
+            || {
+                self.client
+                    .post(&url)
+                    .header("x-api-key", &self.config.api_key)
+                    .json(&body)
+            },
+        )
         .await
         .context("failed to submit time entry to Clockify")?;
         Ok(())

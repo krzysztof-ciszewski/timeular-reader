@@ -40,12 +40,16 @@ impl Handler for Hackaru {
             self.config.hackaru_url.trim_end_matches('/'),
             self.config.activities_rel_url.trim_matches('/')
         );
-        let response_body = super::http::send_with_retry("Hackaru activity start request", || {
-            self.client
-                .post(&start_url)
-                .header("x-requested-with", "XMLHttpRequest")
-                .json(&activity_start)
-        })
+        let response_body = super::http::send_with_retry(
+            "Hackaru activity start request",
+            super::http::ResponseBodyPolicy::ReadOnce,
+            || {
+                self.client
+                    .post(&start_url)
+                    .header("x-requested-with", "XMLHttpRequest")
+                    .json(&activity_start)
+            },
+        )
         .await
         .context("failed to start Hackaru activity")?;
         let response = serde_json::from_slice::<ActivityResponse>(&response_body)
@@ -64,12 +68,16 @@ impl Handler for Hackaru {
             self.config.activities_rel_url.trim_matches('/'),
             response.id
         );
-        super::http::send_with_retry("Hackaru activity stop request", || {
-            self.client
-                .put(&end_url)
-                .header("x-requested-with", "XMLHttpRequest")
-                .json(&activity_end)
-        })
+        super::http::send_with_retry(
+            "Hackaru activity stop request",
+            super::http::ResponseBodyPolicy::Ignore,
+            || {
+                self.client
+                    .put(&end_url)
+                    .header("x-requested-with", "XMLHttpRequest")
+                    .json(&activity_end)
+            },
+        )
         .await
         .context("failed to stop Hackaru activity")?;
         Ok(())
@@ -228,13 +236,17 @@ async fn auth(client: &Client, config: &HackaruConfig) -> Result<()> {
         "{}/auth/auth_tokens",
         config.hackaru_url.trim_end_matches('/')
     );
-    super::http::send_with_retry("Hackaru authentication request", || {
-        client
-            .post(&url)
-            .json(&login)
-            .header("Content-Type", "application/json")
-            .header("X-Requested-With", "XMLHttpRequest")
-    })
+    super::http::send_with_retry(
+        "Hackaru authentication request",
+        super::http::ResponseBodyPolicy::Ignore,
+        || {
+            client
+                .post(&url)
+                .json(&login)
+                .header("Content-Type", "application/json")
+                .header("X-Requested-With", "XMLHttpRequest")
+        },
+    )
     .await
     .context("failed to authenticate with Hackaru")?;
 
