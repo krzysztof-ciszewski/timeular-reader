@@ -360,7 +360,7 @@ mod tests {
 
     use super::{
         finish_submissions, format_time_spent, process_orientations, queue_entry,
-        record_entry_with_timeout, wait_for_shutdown,
+        record_entry_with_timeout, SUBMISSION_QUEUE_CAPACITY,
     };
 
     #[derive(Default)]
@@ -584,28 +584,85 @@ mod tests {
 
     #[tokio::test]
     async fn shutdown_interrupts_an_enqueue_blocked_by_a_full_queue() {
-        let (sender, _receiver) = mpsc::channel(1);
-        let entry = crate::test_support::time_entry(1, "Work");
-        sender.send(entry.clone()).await.unwrap();
+        let (started_transmitter, started_receiver) = oneshot::channel();
+        let (blocked_transmitter, blocked_receiver) = oneshot::channel();
+        let entry_count = SUBMISSION_QUEUE_CAPACITY + 3;
+        let configured_sides: Vec<Side> = (1..=entry_count)
+            .map(|index| Side {
+                side_num: u8::try_from(index).unwrap(),
+                label: format!("Entry {index}"),
+                configurable: true,
+            })
+            .collect();
+        let expected_labels: Vec<String> = configured_sides
+            .iter()
+            .map(|side| side.label.clone())
+            .collect();
+        let orientations = stream::unfold(
+            (0, Some(started_receiver), Some(blocked_transmitter)),
+            move |(index, started_receiver, blocked_transmitter)| async move {
+                let mut started_receiver = started_receiver;
+                let mut blocked_transmitter = blocked_transmitter;
+                if index == 2 {
+                    started_receiver.take().unwrap().await.unwrap();
+                }
+                assert!(
+                    index < entry_count,
+                    "tracking must stop at the blocked enqueue"
+                );
+                if index == entry_count - 1 {
+                    blocked_transmitter.take().unwrap().send(()).unwrap();
+                }
+                Some((
+                    Some(u8::try_from(index + 1).unwrap()),
+                    (index + 1, started_receiver, blocked_transmitter),
+                ))
+            },
+        );
+        let handler = Arc::new(BlockingHandler {
+            calls: AtomicUsize::new(0),
+            entries: Mutex::new(Vec::new()),
+            started: Mutex::new(Some(started_transmitter)),
+            release: Notify::new(),
+        });
         let (shutdown_transmitter, mut shutdown_receiver) = watch::channel(false);
-        let pending = entry.clone();
+        let task_handler = handler.clone();
         let task = tokio::spawn(async move {
-            tokio::select! {
-                biased;
-                _ = wait_for_shutdown(&mut shutdown_receiver) => pending,
-                result = queue_entry(&sender, &pending) => {
-                    result.unwrap();
-                    panic!("the full queue should not accept another entry");
-                },
-            }
+            process_orientations(
+                orientations,
+                &configured_sides,
+                task_handler,
+                &mut shutdown_receiver,
+            )
+            .await
         });
 
-        shutdown_transmitter.send_replace(true);
-        let unsent = tokio::time::timeout(Duration::from_secs(1), task)
+        tokio::time::timeout(Duration::from_secs(1), blocked_receiver)
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(unsent, entry);
+        assert_eq!(handler.calls.load(Ordering::SeqCst), 1);
+        assert!(!task.is_finished());
+        shutdown_transmitter.send_replace(true);
+        tokio::task::yield_now().await;
+        handler.release.notify_one();
+        tokio::time::timeout(Duration::from_secs(1), task)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+
+        let entries = handler.entries.lock().unwrap();
+        let recorded_labels: Vec<&str> = entries
+            .iter()
+            .map(|entry| entry.side.label.as_str())
+            .collect();
+        assert_eq!(recorded_labels, expected_labels);
+        assert_eq!(
+            handler.calls.load(Ordering::SeqCst),
+            entry_count,
+            "queued, interrupted, and active entries must each be submitted exactly once"
+        );
     }
 
     #[tokio::test]
