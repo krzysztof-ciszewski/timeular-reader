@@ -1,13 +1,14 @@
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 use std::{error::Error as _, io};
 
 use anyhow::{Context as _, Result};
 use log::warn;
-use reqwest::{RequestBuilder, StatusCode};
+use reqwest::{header::HeaderValue, RequestBuilder, StatusCode};
 
 const MAX_ATTEMPTS: u32 = 3;
 const INITIAL_BACKOFF: Duration = Duration::from_millis(200);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
+const MAX_RETRY_AFTER: Duration = Duration::from_secs(30);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum ResponseBodyPolicy {
@@ -37,6 +38,7 @@ where
     F: FnMut() -> RequestBuilder,
 {
     for attempt in 1..=MAX_ATTEMPTS {
+        let mut delay = INITIAL_BACKOFF * 2u32.pow(attempt - 1);
         match build_request().timeout(request_timeout).send().await {
             Ok(response) if response.status().is_success() => {
                 if body_policy == ResponseBodyPolicy::Ignore {
@@ -64,6 +66,13 @@ where
                     anyhow::bail!("{operation} failed with HTTP status {status}");
                 }
 
+                if let Some(retry_after) = response
+                    .headers()
+                    .get(reqwest::header::RETRY_AFTER)
+                    .and_then(|value| parse_retry_after(value, SystemTime::now()))
+                {
+                    delay = retry_after;
+                }
                 warn!("{operation} returned HTTP {status}; retrying ({attempt}/{MAX_ATTEMPTS})");
             }
             Err(error) => {
@@ -76,10 +85,23 @@ where
             }
         }
 
-        tokio::time::sleep(INITIAL_BACKOFF * 2u32.pow(attempt - 1)).await;
+        tokio::time::sleep(delay).await;
     }
 
     unreachable!("the retry loop returns or fails on its final attempt")
+}
+
+fn parse_retry_after(value: &HeaderValue, now: SystemTime) -> Option<Duration> {
+    let value = value.to_str().ok()?.trim();
+    let delay = if !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit()) {
+        Duration::from_secs(value.parse().unwrap_or(u64::MAX))
+    } else {
+        httpdate::parse_http_date(value)
+            .ok()?
+            .duration_since(now)
+            .unwrap_or(Duration::ZERO)
+    };
+    Some(delay.min(MAX_RETRY_AFTER))
 }
 
 fn is_retryable_status(status: StatusCode) -> bool {
@@ -121,20 +143,20 @@ fn is_retryable_transport_error(error: &reqwest::Error) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        is_retryable_status, is_retryable_transport_error, send_with_retry,
-        send_with_retry_timeout, ResponseBodyPolicy,
+        is_retryable_status, is_retryable_transport_error, parse_retry_after, send_with_retry,
+        send_with_retry_timeout, ResponseBodyPolicy, MAX_RETRY_AFTER,
     };
     use crate::test_support::MockServer;
-    use reqwest::StatusCode;
+    use reqwest::{header::HeaderValue, StatusCode};
     use std::{
         io::{Read, Write},
         net::{TcpListener, TcpStream},
         sync::{
             atomic::{AtomicUsize, Ordering},
-            Arc,
+            Arc, Mutex,
         },
         thread::{self, JoinHandle},
-        time::Duration,
+        time::{Duration, Instant, SystemTime},
     };
 
     fn start_server<F>(request_count: usize, respond: F) -> (String, JoinHandle<()>)
@@ -170,6 +192,100 @@ mod tests {
         assert!(!is_retryable_status(StatusCode::BAD_REQUEST));
         assert!(!is_retryable_status(StatusCode::UNAUTHORIZED));
         assert!(!is_retryable_status(StatusCode::NOT_FOUND));
+    }
+
+    #[test]
+    fn parses_and_caps_retry_after_values() {
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        let parse = |value: &str| parse_retry_after(&HeaderValue::from_str(value).unwrap(), now);
+
+        assert_eq!(parse("1"), Some(Duration::from_secs(1)));
+        assert_eq!(parse("0"), Some(Duration::ZERO));
+        assert_eq!(parse("999999999999999999999999"), Some(MAX_RETRY_AFTER));
+        assert_eq!(
+            parse(&httpdate::fmt_http_date(now + Duration::from_secs(10))),
+            Some(Duration::from_secs(10))
+        );
+        assert_eq!(
+            parse(&httpdate::fmt_http_date(now + Duration::from_secs(60))),
+            Some(MAX_RETRY_AFTER)
+        );
+        assert_eq!(
+            parse(&httpdate::fmt_http_date(now - Duration::from_secs(1))),
+            Some(Duration::ZERO)
+        );
+        assert_eq!(parse("invalid"), None);
+        assert_eq!(parse("-1"), None);
+        assert_eq!(parse("1.5"), None);
+        assert_eq!(parse(""), None);
+    }
+
+    #[tokio::test]
+    async fn honors_retry_after_for_rate_limits_and_service_unavailability() {
+        for status in [429, 503] {
+            let response_sent = Arc::new(Mutex::new(None));
+            let response_timestamp = Arc::clone(&response_sent);
+            let (url, worker) = start_server(2, move |index, mut stream| {
+                let mut request = [0; 1024];
+                let _ = stream.read(&mut request).unwrap();
+                if index == 0 {
+                    *response_timestamp.lock().unwrap() = Some(Instant::now());
+                    write!(
+                        stream,
+                        "HTTP/1.1 {status} Retry\r\nRetry-After: 1\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                    )
+                    .unwrap();
+                    stream.flush().unwrap();
+                } else {
+                    let elapsed = response_timestamp.lock().unwrap().unwrap().elapsed();
+                    assert!(elapsed >= Duration::from_secs(1));
+                    respond_ok(stream, b"{}");
+                }
+            });
+            let client = reqwest::Client::new();
+
+            send_with_retry("test request", ResponseBodyPolicy::Ignore, || {
+                client.get(&url)
+            })
+            .await
+            .unwrap();
+
+            worker.join().unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn falls_back_to_exponential_backoff_for_invalid_or_missing_retry_after() {
+        for header in ["", "Retry-After: invalid\r\n"] {
+            let response_sent = Arc::new(Mutex::new(None));
+            let response_timestamp = Arc::clone(&response_sent);
+            let (url, worker) = start_server(2, move |index, mut stream| {
+                let mut request = [0; 1024];
+                let _ = stream.read(&mut request).unwrap();
+                if index == 0 {
+                    *response_timestamp.lock().unwrap() = Some(Instant::now());
+                    write!(
+                        stream,
+                        "HTTP/1.1 503 Retry\r\n{header}Content-Length: 0\r\nConnection: close\r\n\r\n"
+                    )
+                    .unwrap();
+                    stream.flush().unwrap();
+                } else {
+                    let elapsed = response_timestamp.lock().unwrap().unwrap().elapsed();
+                    assert!(elapsed >= Duration::from_millis(200));
+                    respond_ok(stream, b"{}");
+                }
+            });
+            let client = reqwest::Client::new();
+
+            send_with_retry("test request", ResponseBodyPolicy::Ignore, || {
+                client.get(&url)
+            })
+            .await
+            .unwrap();
+
+            worker.join().unwrap();
+        }
     }
 
     #[tokio::test]
