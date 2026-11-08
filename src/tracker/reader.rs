@@ -18,7 +18,8 @@ use crate::tracker::state_machine::Tracker;
 use super::config;
 
 const SUBMISSION_QUEUE_CAPACITY: usize = 100;
-const ENTRY_SUBMISSION_TIMEOUT: Duration = Duration::from_secs(120);
+const ENTRY_SUBMISSION_TIMEOUT: Duration = Duration::from_secs(30);
+const SHUTDOWN_GRACE_PERIOD: Duration = Duration::from_secs(15);
 
 pub async fn read_tracker(
     id: PeripheralId,
@@ -188,56 +189,113 @@ where
         }
     });
 
-    loop {
-        if *shutdown.borrow() {
-            break;
-        }
+    let mut final_entries = Vec::new();
+    let tracking_result: Result<()> = async {
+        loop {
+            let side_num = tokio::select! {
+                biased;
+                _ = wait_for_shutdown(shutdown) => break,
+                orientation = orientations.next() => match orientation {
+                    Some(side_num) => side_num,
+                    None => break,
+                },
+            };
 
-        let side_num = tokio::select! {
-            biased;
-            changed = shutdown.changed() => {
-                if changed.is_err() || *shutdown.borrow() {
-                    break;
-                }
+            let Some(side_num) = side_num else {
+                warn!("Ignoring empty tracker orientation notification");
                 continue;
-            },
-            orientation = orientations.next() => match orientation {
-                Some(side_num) => side_num,
-                None => break,
-            },
-        };
+            };
+            let side = sides.iter().find(|entry| entry.side_num == side_num);
 
-        let Some(side_num) = side_num else {
-            warn!("Ignoring empty tracker orientation notification");
-            continue;
-        };
-        let side = sides.iter().find(|entry| entry.side_num == side_num);
+            if side.is_none() {
+                warn!("Tracker reported unconfigured side {side_num}");
+            }
 
-        if side.is_none() {
-            warn!("Tracker reported unconfigured side {side_num}");
+            if let Some(side) = side.filter(|side| side.is_trackable()) {
+                info!("Currently tracking {}", side.label);
+            }
+
+            debug!("current side: {:?}", side);
+
+            if let Some(entry) = tracker_state.on_side(side, Local::now()) {
+                tokio::select! {
+                    biased;
+                    _ = wait_for_shutdown(shutdown) => {
+                        final_entries.push(entry);
+                        break;
+                    },
+                    queued = queue_entry(&submission_transmitter, &entry) => queued?,
+                }
+            }
         }
-
-        if let Some(side) = side.filter(|side| side.is_trackable()) {
-            info!("Currently tracking {}", side.label);
-        }
-
-        debug!("current side: {:?}", side);
-
-        if let Some(entry) = tracker_state.on_side(side, Local::now()) {
-            queue_entry(&submission_transmitter, &entry).await?;
-        }
+        Ok(())
     }
+    .await;
 
     if let Some(entry) = tracker_state.finish(Local::now()) {
-        queue_entry(&submission_transmitter, &entry).await?;
+        final_entries.push(entry);
     }
 
-    drop(submission_transmitter);
-    submission_worker
-        .await
-        .context("time-entry submission worker failed")?;
+    finish_submissions(
+        submission_transmitter,
+        submission_worker,
+        final_entries,
+        SHUTDOWN_GRACE_PERIOD,
+    )
+    .await?;
 
-    Ok(())
+    tracking_result
+}
+
+async fn wait_for_shutdown(shutdown: &mut watch::Receiver<bool>) {
+    while !*shutdown.borrow() {
+        if shutdown.changed().await.is_err() {
+            break;
+        }
+    }
+}
+
+async fn finish_submissions(
+    submissions: mpsc::Sender<config::TimeEntry>,
+    mut worker: tokio::task::JoinHandle<()>,
+    final_entries: Vec<config::TimeEntry>,
+    grace_period: Duration,
+) -> Result<()> {
+    let result = tokio::time::timeout(grace_period, async {
+        for entry in final_entries {
+            queue_entry(&submissions, &entry).await?;
+        }
+        drop(submissions);
+        (&mut worker)
+            .await
+            .context("time-entry submission worker failed")
+    })
+    .await;
+
+    match result {
+        Ok(Ok(())) => Ok(()),
+        failure => {
+            worker.abort();
+            if !worker.is_finished() {
+                match worker.await {
+                    Ok(()) => {}
+                    Err(error) if error.is_cancelled() => {}
+                    Err(error) => error!("time-entry submission worker failed: {error}"),
+                }
+            }
+            error!(
+                "Submission drain did not complete; remaining queued, final, or in-flight \
+                 entries may be lost and will not be replayed. Hackaru may have an unstopped activity."
+            );
+            match failure {
+                Ok(Err(error)) => Err(error),
+                Err(_) => anyhow::bail!(
+                    "time-entry submission shutdown exceeded the {grace_period:?} grace period"
+                ),
+                Ok(Ok(())) => unreachable!(),
+            }
+        }
+    }
 }
 
 async fn queue_entry(
@@ -300,7 +358,10 @@ mod tests {
 
     use crate::tracker::config::{Handler, Side, TimeEntry};
 
-    use super::{format_time_spent, process_orientations, queue_entry, record_entry_with_timeout};
+    use super::{
+        finish_submissions, format_time_spent, process_orientations, queue_entry,
+        record_entry_with_timeout, wait_for_shutdown,
+    };
 
     #[derive(Default)]
     struct RecordingHandler {
@@ -519,6 +580,90 @@ mod tests {
         .unwrap_err();
 
         assert!(error.to_string().contains("handler did not finish"));
+    }
+
+    #[tokio::test]
+    async fn shutdown_interrupts_an_enqueue_blocked_by_a_full_queue() {
+        let (sender, _receiver) = mpsc::channel(1);
+        let entry = crate::test_support::time_entry(1, "Work");
+        sender.send(entry.clone()).await.unwrap();
+        let (shutdown_transmitter, mut shutdown_receiver) = watch::channel(false);
+        let pending = entry.clone();
+        let task = tokio::spawn(async move {
+            tokio::select! {
+                biased;
+                _ = wait_for_shutdown(&mut shutdown_receiver) => pending,
+                result = queue_entry(&sender, &pending) => {
+                    result.unwrap();
+                    panic!("the full queue should not accept another entry");
+                },
+            }
+        });
+
+        shutdown_transmitter.send_replace(true);
+        let unsent = tokio::time::timeout(Duration::from_secs(1), task)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(unsent, entry);
+    }
+
+    #[tokio::test]
+    async fn shutdown_grace_includes_waiting_to_enqueue_the_final_entry() {
+        let (sender, receiver) = mpsc::channel(1);
+        let entry = crate::test_support::time_entry(1, "Work");
+        sender.send(entry.clone()).await.unwrap();
+        let marker = Arc::new(());
+        let task_marker = marker.clone();
+        let (started_transmitter, started_receiver) = oneshot::channel();
+        let worker = tokio::spawn(async move {
+            let _receiver = receiver;
+            let _marker = task_marker;
+            started_transmitter.send(()).unwrap();
+            std::future::pending::<()>().await;
+        });
+        started_receiver.await.unwrap();
+
+        let error = tokio::time::timeout(
+            Duration::from_secs(1),
+            finish_submissions(sender, worker, vec![entry], Duration::from_millis(20)),
+        )
+        .await
+        .unwrap()
+        .unwrap_err();
+
+        assert!(error.to_string().contains("grace period"));
+        assert_eq!(Arc::strong_count(&marker), 1, "worker must be cancelled");
+    }
+
+    #[tokio::test]
+    async fn shutdown_grace_is_shared_by_all_queued_entries() {
+        let (sender, mut receiver) = mpsc::channel(3);
+        for _ in 0..3 {
+            sender
+                .send(crate::test_support::time_entry(1, "Work"))
+                .await
+                .unwrap();
+        }
+        let marker = Arc::new(());
+        let task_marker = marker.clone();
+        let worker = tokio::spawn(async move {
+            let _marker = task_marker;
+            while receiver.recv().await.is_some() {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        });
+
+        let error = tokio::time::timeout(
+            Duration::from_secs(1),
+            finish_submissions(sender, worker, Vec::new(), Duration::from_millis(20)),
+        )
+        .await
+        .unwrap()
+        .unwrap_err();
+
+        assert!(error.to_string().contains("grace period"));
+        assert_eq!(Arc::strong_count(&marker), 1, "worker must be cancelled");
     }
 
     #[tokio::test]

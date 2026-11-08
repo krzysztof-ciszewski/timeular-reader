@@ -7,7 +7,7 @@ use reqwest::{header::HeaderValue, RequestBuilder, Response, StatusCode};
 
 const MAX_ATTEMPTS: u32 = 3;
 const INITIAL_BACKOFF: Duration = Duration::from_millis(200);
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_RETRY_AFTER: Duration = Duration::from_secs(30);
 const MAX_ERROR_BODY_DRAIN_BYTES: usize = 64 * 1024;
 

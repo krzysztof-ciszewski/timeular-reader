@@ -319,6 +319,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn retries_both_activity_phases_without_restarting_a_created_activity() {
+        let server = MockServer::start(6, |index, _| match index {
+            2 => (201, r#"{"id":42}"#.into()),
+            5 => (200, "{}".into()),
+            _ => (503, "{}".into()),
+        });
+        let handler = Hackaru {
+            client: Client::new(),
+            config: HackaruConfig {
+                hackaru_url: server.url().into(),
+                ..HackaruConfig::default()
+            },
+        };
+
+        handler.handle(&time_entry(1, "Work")).await.unwrap();
+
+        let requests = server.finish();
+        assert_eq!(requests.len(), 6);
+        for request in &requests[..3] {
+            assert!(request.starts_with("POST /v1/activities HTTP/1.1"));
+            assert_eq!(request_body(request), request_body(&requests[0]));
+        }
+        for request in &requests[3..] {
+            assert!(request.starts_with("PUT /v1/activities/42 HTTP/1.1"));
+            assert_eq!(request_body(request), request_body(&requests[3]));
+        }
+        let stop: serde_json::Value = serde_json::from_str(request_body(&requests[3])).unwrap();
+        assert_eq!(stop["activity"]["id"], 42);
+    }
+
+    #[tokio::test]
     async fn reports_a_failed_activity_stop() {
         let server = MockServer::start(4, |index, _| {
             if index == 0 {
