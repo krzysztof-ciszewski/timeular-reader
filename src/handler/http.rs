@@ -3,12 +3,13 @@ use std::{error::Error as _, io};
 
 use anyhow::{Context as _, Result};
 use log::warn;
-use reqwest::{header::HeaderValue, RequestBuilder, StatusCode};
+use reqwest::{header::HeaderValue, RequestBuilder, Response, StatusCode};
 
 const MAX_ATTEMPTS: u32 = 3;
 const INITIAL_BACKOFF: Duration = Duration::from_millis(200);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 const MAX_RETRY_AFTER: Duration = Duration::from_secs(30);
+const MAX_ERROR_BODY_DRAIN_BYTES: usize = 64 * 1024;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum ResponseBodyPolicy {
@@ -73,6 +74,9 @@ where
                 {
                     delay = retry_after;
                 }
+                if !discard_response_body(response).await {
+                    warn!("{operation} could not drain the retry response body");
+                }
                 warn!("{operation} returned HTTP {status}; retrying ({attempt}/{MAX_ATTEMPTS})");
             }
             Err(error) => {
@@ -89,6 +93,24 @@ where
     }
 
     unreachable!("the retry loop returns or fails on its final attempt")
+}
+
+async fn discard_response_body(mut response: Response) -> bool {
+    let mut remaining = MAX_ERROR_BODY_DRAIN_BYTES;
+    while remaining > 0 {
+        match response.chunk().await {
+            Ok(Some(chunk)) => {
+                if chunk.len() > remaining {
+                    return false;
+                }
+                remaining -= chunk.len();
+            }
+            Ok(None) => return true,
+            Err(_) => return false,
+        }
+    }
+
+    false
 }
 
 fn parse_retry_after(value: &HeaderValue, now: SystemTime) -> Option<Duration> {

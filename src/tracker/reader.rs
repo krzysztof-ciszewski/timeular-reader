@@ -1,4 +1,4 @@
-use std::{pin::Pin, sync::Arc};
+use std::{pin::Pin, sync::Arc, time::Duration};
 
 use crate::handler::{get_handler, Handlers};
 use anyhow::{Context as _, Result};
@@ -16,6 +16,9 @@ use crate::tracker::config::Handler;
 use crate::tracker::state_machine::Tracker;
 
 use super::config;
+
+const SUBMISSION_QUEUE_CAPACITY: usize = 100;
+const ENTRY_SUBMISSION_TIMEOUT: Duration = Duration::from_secs(120);
 
 pub async fn read_tracker(
     id: PeripheralId,
@@ -173,11 +176,14 @@ where
 {
     let mut orientations = Box::pin(orientations);
     let mut tracker_state = Tracker::default();
-    let (submission_transmitter, mut submission_receiver) = mpsc::unbounded_channel();
+    let (submission_transmitter, mut submission_receiver) =
+        mpsc::channel(SUBMISSION_QUEUE_CAPACITY);
     let submission_worker = tokio::spawn(async move {
         while let Some(entry) = submission_receiver.recv().await {
-            if let Err(error) = record_entry(handler.as_ref(), &entry).await {
-                error!("{error:#}");
+            if let Err(error) =
+                record_entry_with_timeout(handler.as_ref(), &entry, ENTRY_SUBMISSION_TIMEOUT).await
+            {
+                error!("failed to record time for {}: {error:#}", entry.side.label);
             }
         }
     });
@@ -218,12 +224,12 @@ where
         debug!("current side: {:?}", side);
 
         if let Some(entry) = tracker_state.on_side(side, Local::now()) {
-            queue_entry(&submission_transmitter, &entry)?;
+            queue_entry(&submission_transmitter, &entry).await?;
         }
     }
 
     if let Some(entry) = tracker_state.finish(Local::now()) {
-        queue_entry(&submission_transmitter, &entry)?;
+        queue_entry(&submission_transmitter, &entry).await?;
     }
 
     drop(submission_transmitter);
@@ -234,14 +240,16 @@ where
     Ok(())
 }
 
-fn queue_entry(
-    submissions: &mpsc::UnboundedSender<crate::tracker::config::TimeEntry>,
+async fn queue_entry(
+    submissions: &mpsc::Sender<crate::tracker::config::TimeEntry>,
     entry: &crate::tracker::config::TimeEntry,
 ) -> Result<()> {
-    log_time_spent(entry.end - entry.start, &entry.side.label);
     submissions
         .send(entry.clone())
-        .context("failed to queue time entry for submission")
+        .await
+        .context("failed to queue time entry for submission")?;
+    log_time_spent(entry.end - entry.start, &entry.side.label);
+    Ok(())
 }
 
 async fn record_entry(
@@ -252,6 +260,16 @@ async fn record_entry(
         .handle(entry)
         .await
         .with_context(|| format!("failed to record time for {}", entry.side.label))
+}
+
+async fn record_entry_with_timeout(
+    handler: &dyn Handler,
+    entry: &crate::tracker::config::TimeEntry,
+    timeout: Duration,
+) -> Result<()> {
+    tokio::time::timeout(timeout, record_entry(handler, entry))
+        .await
+        .map_err(|_| anyhow::anyhow!("handler did not finish within {timeout:?}"))?
 }
 
 fn log_time_spent(duration: TimeDelta, label: &String) {
@@ -273,15 +291,16 @@ mod tests {
         atomic::{AtomicUsize, Ordering},
         Arc, Mutex,
     };
+    use std::time::Duration;
 
     use async_trait::async_trait;
     use chrono::TimeDelta;
     use futures::stream;
-    use tokio::sync::{oneshot, watch, Notify};
+    use tokio::sync::{mpsc, oneshot, watch, Notify};
 
     use crate::tracker::config::{Handler, Side, TimeEntry};
 
-    use super::{format_time_spent, process_orientations};
+    use super::{format_time_spent, process_orientations, queue_entry, record_entry_with_timeout};
 
     #[derive(Default)]
     struct RecordingHandler {
@@ -299,6 +318,8 @@ mod tests {
         calls: AtomicUsize,
         successful_entries: Mutex<Vec<TimeEntry>>,
     }
+
+    struct HangingHandler;
 
     #[async_trait]
     impl Handler for RecordingHandler {
@@ -330,6 +351,13 @@ mod tests {
             }
             self.successful_entries.lock().unwrap().push(entry.clone());
             Ok(())
+        }
+    }
+
+    #[async_trait]
+    impl Handler for HangingHandler {
+        async fn handle(&self, _entry: &TimeEntry) -> anyhow::Result<()> {
+            std::future::pending().await
         }
     }
 
@@ -456,6 +484,41 @@ mod tests {
         .unwrap();
 
         assert!(handler.entries.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn queue_entry_waits_for_capacity_before_reporting_success() {
+        let (sender, mut receiver) = mpsc::channel(1);
+        let first = crate::test_support::time_entry(1, "First");
+        let second = crate::test_support::time_entry(1, "Second");
+        sender.send(first.clone()).await.unwrap();
+
+        let queued_entry = second.clone();
+        let enqueue_sender = sender.clone();
+        let mut enqueue =
+            tokio::spawn(async move { queue_entry(&enqueue_sender, &queued_entry).await });
+        assert!(
+            tokio::time::timeout(Duration::from_millis(10), &mut enqueue)
+                .await
+                .is_err(),
+            "enqueue should wait while the bounded queue is full"
+        );
+        assert_eq!(receiver.recv().await.unwrap(), first);
+        enqueue.await.unwrap().unwrap();
+        assert_eq!(receiver.recv().await.unwrap(), second);
+    }
+
+    #[tokio::test]
+    async fn handler_timeout_returns_control_to_submission_worker() {
+        let error = record_entry_with_timeout(
+            &HangingHandler,
+            &crate::test_support::time_entry(1, "Work"),
+            Duration::from_millis(10),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(error.to_string().contains("handler did not finish"));
     }
 
     #[tokio::test]
