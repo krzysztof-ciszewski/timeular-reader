@@ -60,7 +60,7 @@ To control output verbosity you can pass `--verbose` or `-v`, you can add multip
 
 There is also `--quiet`, `-q` mode to mute all output.
 
-Configuration, setup, Bluetooth, and service errors include context about the operation that failed. Time-entry submissions have a 5-second timeout per request attempt and a 30-second total per-entry timeout, including retry delays and all handler phases. Transient request failures and HTTP 429/5xx responses retry up to three attempts with backoff. Valid `Retry-After` headers on retryable responses are honored up to 30 seconds, subject to the total entry deadline; longer delays are capped. Response-body transfer retries are limited to idempotent requests, and permanent 4xx responses are not retried. Submissions run independently of orientation processing until the bounded 100-entry in-memory queue fills; when full, orientation processing waits for queue space rather than dropping entries. Shutdown interrupts that wait and allows a single 15-second grace period for enqueueing final entries and draining the entire queue, then cancels remaining submissions and reports potential entry loss. Cancellation or timeout can interrupt Hackaru between activity start and stop, leaving an unstopped activity. After a final submission failure or per-entry timeout, the worker logs the error and discards the entry; it is not retained for replay when the service recovers. A crash can also lose queued entries; durable queueing is tracked in [#34](https://github.com/krzysztof-ciszewski/timeular-reader/issues/34). An unset or unknown handler is an error; use `--setup` to select one. Traggo is not implemented and returns an explicit error when asked to record time.
+Configuration, setup, Bluetooth, and service errors include context about the operation that failed. Time-entry submissions have a 5-second timeout per request attempt and a 30-second total per-entry timeout, including retry delays and all handler phases. Transient request failures and HTTP 429/5xx responses retry up to three attempts with backoff. Valid `Retry-After` headers on retryable responses are honored up to 30 seconds, subject to the total entry deadline; longer delays are capped. Response-body transfer retries are limited to idempotent requests, and permanent 4xx responses are not retried. Submissions run independently of orientation processing until the bounded 100-entry in-memory queue fills; when full, orientation processing waits for queue space rather than dropping entries. Shutdown interrupts that wait and allows a single 15-second grace period for enqueueing final entries and draining the entire queue, then cancels remaining submissions and reports potential entry loss. Cancellation or timeout can interrupt Hackaru between activity start and stop, leaving an unstopped activity. After a final submission failure or per-entry timeout, the worker logs the error and discards the entry; it is not retained for replay when the service recovers. A crash can also lose queued entries; durable queueing is tracked in [#34](https://github.com/krzysztof-ciszewski/timeular-reader/issues/34). An unset or unknown handler is an error; use `--setup` to select one.
 
 Reqwest request errors are also retried within these limits, including malformed HTTP responses, because its public error flags do not distinguish all dropped connections from protocol failures. Invalid URLs and request-builder errors are not retried.
 
@@ -82,7 +82,32 @@ Should look something like this `https://app.clockify.me/projects/{project_id}/e
 TODO
 
 ### Traggo
-TODO
+
+Traggo is a self-hosted, tag-based time tracker. During setup, provide the full GraphQL endpoint (for example, `http://localhost:3030/graphql`) and a device token generated in Traggo's device settings. Configure tags directly in each side's label as comma-separated `key:value` pairs, for example `project:Client, type:Meeting`. Each side can have multiple tags, including repeated keys; there is no global tag key.
+
+Before tracking, create each tag key in the Traggo UI. Values can be arbitrary and do not need to exist beforehand. For example, to use `activity:gaming`, first create the `activity` tag in the UI; `gaming` does not need to be created.
+
+Whitespace around keys and values is trimmed. Values can contain spaces and additional colons, but commas separate tags. For example, `project:Client, project :Personal` becomes two `project` tags with values `Client` and `Personal`. Empty keys or values and malformed tags are rejected. An empty side label disables tracking for that side, as with the other handlers.
+
+You can set the labels during `--setup` or edit them under `[[timeular.sides]]` in `config.toml`. For example:
+
+```toml
+[traggo]
+graphql_url = "http://localhost:3030/graphql"
+api_token = "your-device-token"
+
+[[timeular.sides]]
+side_num = 1
+label = "project:Client, type:Meeting"
+configurable = true
+
+[[timeular.sides]]
+side_num = 2
+label = "project:Personal, activity:Reading"
+configurable = true
+```
+
+If you previously used the global `tag_key`, update each existing label to include its key (for example, change `Work` to `activity:Work`). The old `tag_key` setting is no longer used and can be removed.
 
 ### TimeTagger
 During setup, provide a TimeTagger API token and the records API URL. For TimeTagger.app, use `https://timetagger.app/api/v2/records`; for a self-hosted instance, use its `/api/v2/records` endpoint.
@@ -183,7 +208,7 @@ pub async fn get_handler(setup: bool, config: &TimeularConfig) -> anyhow::Result
         "toggl" => Ok(Box::new(toggl::create_handler(setup, &config.sides).await?)),
         "hackaru" => Ok(Box::new(hackaru::create_handler(setup, &config.sides).await?)),
         "clockify" => Ok(Box::new(clockify::create_handler(setup, &config.sides).await?)),
-        "traggo" => Ok(Box::new(traggo::create_handler(setup).await)),
+        "traggo" => Ok(Box::new(traggo::create_handler(setup, &config.sides).await?)),
         "timetagger" => Ok(Box::new(timetagger::create_handler(setup).await?)),
 +       "example" => Ok(Box::new(example::create_handler(setup, &config.sides).await?)),
         handler => anyhow::bail!("unknown time-tracking handler: {handler}"),

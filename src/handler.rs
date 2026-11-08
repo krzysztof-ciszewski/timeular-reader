@@ -62,7 +62,9 @@ pub async fn get_handler(setup: bool, config: &TimeularConfig) -> AppResult<Arc<
         "clockify" => Ok(Arc::new(
             clockify::create_handler(setup, &config.sides).await?,
         )),
-        "traggo" => Ok(Arc::new(traggo::create_handler(setup).await)),
+        "traggo" => Ok(Arc::new(
+            traggo::create_handler(setup, &config.sides).await?,
+        )),
         "example" => Ok(Arc::new(
             example::create_handler(setup, &config.sides).await?,
         )),
@@ -107,5 +109,18 @@ mod tests {
 
         let error = get_handler(false, &config).await.err().unwrap();
         assert!(error.to_string().contains("unknown time-tracking handler"));
+    }
+
+    #[tokio::test]
+    async fn traggo_factory_rejects_malformed_labels_before_loading_service_config() {
+        let config = TimeularConfig {
+            sides: vec![crate::test_support::time_entry(2, "Work").side],
+            handler: "traggo".into(),
+        };
+
+        let error = get_handler(false, &config).await.err().unwrap();
+
+        assert!(format!("{error:#}").contains("invalid Traggo tags for side 2"));
+        assert!(format!("{error:#}").contains("key:value"));
     }
 }

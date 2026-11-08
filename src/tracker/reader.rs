@@ -57,6 +57,12 @@ async fn setup_tracker_config(tracker: &impl Peripheral) -> Result<()> {
         config.handler = format!("{handler:?}").to_lowercase();
     }
 
+    if config.handler == "traggo" {
+        info!(
+            "Use comma-separated key:value tags as side labels (for example, project:Client, type:Meeting)"
+        );
+    }
+
     info!("Flip the device to a side you want to set up");
     let mut notification_stream = get_notification_stream(tracker).await?;
 
@@ -65,8 +71,6 @@ async fn setup_tracker_config(tracker: &impl Peripheral) -> Result<()> {
             warn!("Ignoring empty tracker orientation notification");
             continue;
         };
-
-        let mut label = String::new();
 
         let Some(side_config) = config.sides.iter().find(|entry| entry.side_num == side) else {
             warn!("Ignoring unknown tracker side {side}");
@@ -78,11 +82,22 @@ async fn setup_tracker_config(tracker: &impl Peripheral) -> Result<()> {
         }
 
         info!("Side {}, current label: {}", &side, side_config.label);
-        info!("Please label side {}, q to finish setup", side);
-        std::io::stdin()
-            .read_line(&mut label)
-            .context("failed to read tracker side label")?;
-        label = label.trim().to_string();
+        let label = loop {
+            info!("Please label side {}, q to finish setup", side);
+            let mut label = String::new();
+            std::io::stdin()
+                .read_line(&mut label)
+                .context("failed to read tracker side label")?;
+            let label = label.trim().to_string();
+
+            if config.handler == "traggo" && !label.is_empty() && label != "q" {
+                if let Err(error) = crate::handler::traggo::parse_tags(&label) {
+                    warn!("Invalid Traggo tags for side {side}: {error:#}; try again");
+                    continue;
+                }
+            }
+            break label;
+        };
 
         if label.eq("q") {
             break;
