@@ -131,7 +131,8 @@ fn is_retryable_status(status: StatusCode) -> bool {
 }
 
 fn is_retryable_transport_error(error: &reqwest::Error) -> bool {
-    if error.is_timeout() || error.is_connect() || error.is_body() {
+    // Reqwest also classifies some established-connection failures as request errors.
+    if error.is_timeout() || error.is_connect() || error.is_body() || error.is_request() {
         return true;
     }
 
@@ -140,9 +141,6 @@ fn is_retryable_transport_error(error: &reqwest::Error) -> bool {
         if cause
             .downcast_ref::<reqwest::Error>()
             .is_some_and(|error| error.is_timeout() || error.is_connect() || error.is_body())
-            || cause.downcast_ref::<hyper::Error>().is_some_and(|error| {
-                error.is_closed() || error.is_incomplete_message() || error.is_timeout()
-            })
             || cause.downcast_ref::<io::Error>().is_some_and(|error| {
                 matches!(
                     error.kind(),
@@ -375,8 +373,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn does_not_retry_a_malformed_http_response() {
-        let (url, worker) = start_server(1, |_, mut stream| {
+    async fn malformed_http_responses_exhaust_the_bounded_attempts() {
+        let (url, worker) = start_server(3, |_, mut stream| {
             let mut request = [0; 1024];
             let _ = stream.read(&mut request).unwrap();
             stream.write_all(b"not an HTTP response\r\n\r\n").unwrap();
@@ -394,8 +392,23 @@ mod tests {
             .await
             .is_err()
         );
-        assert_eq!(build_attempts.load(Ordering::SeqCst), 1);
+        assert_eq!(build_attempts.load(Ordering::SeqCst), 3);
         worker.join().unwrap();
+    }
+
+    #[tokio::test]
+    async fn invalid_urls_are_not_retried() {
+        let client = reqwest::Client::new();
+        let mut attempts = 0;
+        let error = send_with_retry("test request", ResponseBodyPolicy::Ignore, || {
+            attempts += 1;
+            client.get("not-a-url")
+        })
+        .await
+        .unwrap_err();
+
+        assert_eq!(attempts, 1);
+        assert!(error.downcast_ref::<reqwest::Error>().unwrap().is_builder());
     }
 
     #[tokio::test]

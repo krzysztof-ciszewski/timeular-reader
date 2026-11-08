@@ -1734,7 +1734,6 @@ dependencies = [
  "clap",
  "futures",
  "httpdate",
- "hyper",
  "log",
  "rand",
  "reqwest",
