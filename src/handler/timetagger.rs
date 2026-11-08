@@ -64,29 +64,30 @@ impl Handler for Timetagger {
             entry.side, entry
         );
 
-        let response = self
-            .client
-            .put(self.config.timetagger_url.trim_end_matches('/'))
-            .header("authtoken", &self.config.api_key)
-            .json(&[record])
-            .send()
-            .await
-            .context("failed to send time entry to TimeTagger")?
-            .error_for_status()
-            .context("TimeTagger rejected the time entry")?;
+        let url = self.config.timetagger_url.trim_end_matches('/').to_string();
+        let response_body = super::http::send_with_retry(
+            "TimeTagger time-entry request",
+            super::http::ResponseBodyPolicy::RetryTransientTransfer,
+            || {
+                self.client
+                    .put(&url)
+                    .header("authtoken", &self.config.api_key)
+                    .json(&[&record])
+            },
+        )
+        .await
+        .context("failed to submit time entry to TimeTagger")?;
 
-        let result = response
-            .json::<RecordsResponse>()
-            .await
+        let result = serde_json::from_slice::<RecordsResponse>(&response_body)
             .context("failed to parse TimeTagger response")?;
         if !result.accepted.iter().any(|accepted| accepted == &key)
             || !result.failed.is_empty()
             || !result.errors.is_empty()
         {
             bail!(
-                "TimeTagger did not accept record {key}; failed: {:?}; errors: {:?}",
-                result.failed,
-                result.errors
+                "TimeTagger did not accept record; {} failed record(s), {} error(s)",
+                result.failed.len(),
+                result.errors.len()
             );
         }
         debug!("TimeTagger accepted record {key}");
@@ -233,5 +234,59 @@ mod tests {
 
         assert!(format!("{error:#}").contains("TimeTagger did not accept record"));
         server.finish();
+    }
+
+    #[tokio::test]
+    async fn malformed_response_json_is_not_retried() {
+        let server = MockServer::start(1, |_, _| (200, "not json".into()));
+        let config = super::config::TimetaggerConfig {
+            timetagger_url: server.url().into(),
+            ..super::config::TimetaggerConfig::default()
+        };
+        let handler = Timetagger {
+            client: Client::new(),
+            config,
+        };
+
+        let error = handler.handle(&time_entry(1, "Work")).await.unwrap_err();
+
+        assert!(format!("{error:#}").contains("failed to parse TimeTagger response"));
+        assert_eq!(server.finish().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn retries_transient_failure_with_the_same_record_key_and_data() {
+        let server = MockServer::start(2, |index, request| {
+            let records: serde_json::Value = serde_json::from_str(request_body(request)).unwrap();
+            let key = records[0]["key"].as_str().unwrap();
+            if index == 0 {
+                (503, "{}".into())
+            } else {
+                (
+                    200,
+                    json!({"accepted": [key], "failed": [], "errors": []}).to_string(),
+                )
+            }
+        });
+        let config = super::config::TimetaggerConfig {
+            timetagger_url: server.url().into(),
+            api_key: "token".into(),
+        };
+        let entry = time_entry(1, "Focus");
+        let handler = Timetagger {
+            client: Client::new(),
+            config,
+        };
+
+        handler.handle(&entry).await.unwrap();
+
+        let requests = server.finish();
+        let first: serde_json::Value = serde_json::from_str(request_body(&requests[0])).unwrap();
+        let second: serde_json::Value = serde_json::from_str(request_body(&requests[1])).unwrap();
+        assert_eq!(first, second);
+        assert_eq!(first[0]["t1"], entry.start.timestamp());
+        assert_eq!(first[0]["t2"], entry.end.timestamp());
+        assert_eq!(first[0]["ds"], entry.side.label);
+        assert_eq!(first[0]["key"].as_str().unwrap().len(), RECORD_KEY_LENGTH);
     }
 }

@@ -61,34 +61,28 @@ impl Handler for Toggl {
 
         let time_entries_url = self.get_time_entries_uri()?;
 
-        let request_builder = self
-            .client
-            .post(format!(
-                "{}/{}",
-                self.config.base_url.trim_end_matches('/'),
-                time_entries_url,
-            ))
-            .basic_auth(&self.config.email, Some(&self.config.password))
-            .json(&body);
-
         debug!(
             "Sending time entry to Toggl workspace {}",
             self.config.workspace_id
         );
 
-        let res = request_builder
-            .send()
-            .await
-            .context("failed to send time entry to Toggl")?
-            .error_for_status()
-            .context("Toggl rejected the time entry")?;
-
-        debug!(
-            "Toggl response: {}",
-            res.text()
-                .await
-                .context("failed to read Toggl response body")?
+        let url = format!(
+            "{}/{}",
+            self.config.base_url.trim_end_matches('/'),
+            time_entries_url,
         );
+        super::http::send_with_retry(
+            "Toggl time-entry request",
+            super::http::ResponseBodyPolicy::Ignore,
+            || {
+                self.client
+                    .post(&url)
+                    .basic_auth(&self.config.email, Some(&self.config.password))
+                    .json(&body)
+            },
+        )
+        .await
+        .context("failed to submit time entry to Toggl")?;
         Ok(())
     }
 }
@@ -251,7 +245,7 @@ mod tests {
 
     #[tokio::test]
     async fn reports_http_rejection() {
-        let server = MockServer::start(1, |_, _| (500, "{}".into()));
+        let server = MockServer::start(3, |_, _| (500, "{}".into()));
         let config = TogglConfig {
             base_url: server.url().to_string(),
             workspace_id: 1,
@@ -264,7 +258,9 @@ mod tests {
         };
         let error = handler.handle(&time_entry(1, "Work")).await.unwrap_err();
 
-        assert!(format!("{error:#}").contains("Toggl rejected the time entry"));
-        server.finish();
+        assert!(
+            format!("{error:#}").contains("Toggl time-entry request failed with HTTP status 500")
+        );
+        assert_eq!(server.finish().len(), 3);
     }
 }

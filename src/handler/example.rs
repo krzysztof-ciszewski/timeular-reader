@@ -3,7 +3,6 @@ use crate::tracker::config::{Handler, Side, TimeEntry};
 use crate::tracker::side_project::prompt_side_projects;
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
-use log::debug;
 use reqwest::header::CONTENT_TYPE;
 use reqwest::Client;
 use simplelog::info;
@@ -26,24 +25,19 @@ impl Handler for Example {
             entry
         );
 
-        let response = self
-            .client
-            .post(self.config.base_url.trim_end_matches('/').to_string())
-            .header(CONTENT_TYPE, "application/json")
-            .header("x-api-key", &self.config.api_key)
-            .send()
-            .await
-            .context("failed to send request to Example handler")?
-            .error_for_status()
-            .context("Example API rejected the request")?;
-
-        debug!(
-            "Response: {}",
-            response
-                .text()
-                .await
-                .context("failed to read Example API response")?
-        );
+        let url = self.config.base_url.trim_end_matches('/').to_string();
+        super::http::send_with_retry(
+            "Example time-entry request",
+            super::http::ResponseBodyPolicy::Ignore,
+            || {
+                self.client
+                    .post(&url)
+                    .header(CONTENT_TYPE, "application/json")
+                    .header("x-api-key", &self.config.api_key)
+            },
+        )
+        .await
+        .context("failed to submit time entry to Example handler")?;
         Ok(())
     }
 }
@@ -95,7 +89,7 @@ mod tests {
 
     #[tokio::test]
     async fn sends_api_key_and_surfaces_http_errors() {
-        let server = MockServer::start(2, |index, _| {
+        let server = MockServer::start(4, |index, _| {
             if index == 0 {
                 (200, "{}".into())
             } else {
@@ -115,12 +109,16 @@ mod tests {
         handler.handle(&time_entry(1, "Work")).await.unwrap();
         let error = handler.handle(&time_entry(1, "Break")).await.unwrap_err();
 
-        assert!(format!("{error:#}").contains("Example API rejected the request"));
+        assert!(
+            format!("{error:#}").contains("Example time-entry request failed with HTTP status 500")
+        );
         let requests = server.finish();
         assert!(requests[0].starts_with("POST /records HTTP/1.1"));
         assert!(requests[0]
             .to_ascii_lowercase()
             .contains("x-api-key: token"));
         assert!(requests[1].starts_with("POST /records HTTP/1.1"));
+        assert!(requests[2].starts_with("POST /records HTTP/1.1"));
+        assert!(requests[3].starts_with("POST /records HTTP/1.1"));
     }
 }
